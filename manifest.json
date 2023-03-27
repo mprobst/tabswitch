@@ -1,0 +1,19 @@
+{
+  "name": "Switch Tabs",
+  "manifest_version": 3,
+  "version": "0.1",
+  "background": {
+    "service_worker": "tab_listener.js",
+    "type": "module"
+  },
+  "commands": {
+    "previous-tab" : {
+      "suggested_key": {
+        "default": "Ctrl+Q",
+        "mac": "MacCtrl+Q"
+      },
+      "description": "Switch to the previously active tab"    
+   }
+  },
+  "permissions": ["storage"]
+}
