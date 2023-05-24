@@ -4,5 +4,8 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.224"
+  },
+  "scripts": {
+    "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json"
   }
 }

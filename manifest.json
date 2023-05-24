@@ -15,5 +15,8 @@
       "description": "Switch to the previously active tab"    
    }
   },
+  "icons": {
+    "128": "logo128.png"
+  },
   "permissions": ["storage"]
 }
