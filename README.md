@@ -7,7 +7,7 @@ functionality, but they often require excessive permissions.
 ## Installation
 
 You can install this by visiting [Switch Tabs in the Chrome Web
-Store](https://chromewebstore.google.com/detail/jpfcacngcfejgnoaobkgoojockhdlphi).
+Store](https://chrome.google.com/webstore/detail/switch-tabs/jpfcacngcfejgnoaobkgoojockhdlphi).
 
 ## Permissions
 
