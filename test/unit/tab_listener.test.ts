@@ -12,12 +12,12 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { FakeChrome } from './fake-chrome.ts';
 
-const MODULE_URL = process.env.TAB_LISTENER
-  ? pathToFileURL(resolve(process.env.TAB_LISTENER)).href
+const MODULE_URL = process.env['TAB_LISTENER']
+  ? pathToFileURL(resolve(process.env['TAB_LISTENER'])).href
   : new URL('../../tab_listener.js', import.meta.url).href;
 
 // The extension logs a lot; keep the test output readable.
-if (!process.env.DEBUG) console.log = () => {};
+if (!process.env['DEBUG']) console.log = () => {};
 
 describe('tab_listener', () => {
   let fake: FakeChrome;
@@ -330,7 +330,7 @@ describe('tab_listener', () => {
     await activate(t2);
     const t2New = fake.replaceTab(t2, { activation: 'after' });
     await fake.settle();
-    assert.deepEqual(fake.storage.session.data.mru, [t2New, t1]);
+    assert.deepEqual(fake.storage.session.data['mru'], [t2New, t1]);
     assert.equal((await press())?.tabId, t1);
     assert.equal((await press())?.tabId, t2New);
   });
@@ -343,7 +343,7 @@ describe('tab_listener', () => {
     await activate(t2);
     const t2New = fake.replaceTab(t2, { activation: 'before' });
     await fake.settle();
-    assert.deepEqual(fake.storage.session.data.mru, [t2New, t1]);
+    assert.deepEqual(fake.storage.session.data['mru'], [t2New, t1]);
   });
 
   test('remembers at most 100 tabs, and they survive a restart', async () => {
@@ -351,7 +351,7 @@ describe('tab_listener', () => {
     await start();
     for (const id of tabIds) fake.activateTab(id);
     await fake.settle();
-    const mru = fake.storage.session.data.mru as number[];
+    const mru = fake.storage.session.data['mru'] as number[];
     assert.equal(mru.length, 100);
     assert.equal(mru[0], tabIds[119]);
     assert.equal(mru[99], tabIds[20]);
