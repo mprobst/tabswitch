@@ -9,7 +9,7 @@ const SHORTCUT = 'ctrl+q';
 const test = extensionTest('tab_listener.js');
 
 test.describe('tabswitch', () => {
-  const reason = skipReason();
+  const reason = skipReason({ keyPresses: true });
   test.skip(reason !== undefined, reason);
 
   test('toggles between the two most recent tabs', async ({ b }) => {
