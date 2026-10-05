@@ -3,9 +3,11 @@
     "typescript": "^5.0.2"
   },
   "devDependencies": {
-    "@types/chrome": "^0.3.4"
+    "@types/chrome": "^0.3.4",
+    "playwright-core": "^1.63.0"
   },
   "scripts": {
-    "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json"
+    "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json",
+    "test:e2e": "tsc && node --test --test-concurrency=1 'test/e2e/*.test.mjs'"
   }
 }

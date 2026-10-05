@@ -108,6 +108,10 @@ chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
   const i = mru.indexOf(removedTabId);
   if (i < 0) return;
   mru.splice(i, 1, addedTabId);
+  // The new ID may already have been recorded (e.g. it was activated before
+  // this event arrived); keep only its most recent slot.
+  const dup = mru.indexOf(addedTabId, i + 1);
+  if (dup >= 0) mru.splice(dup, 1);
   save();
 });
 
@@ -132,30 +136,50 @@ async function activatePreviousTab() {
       forget(tabId);  // closed without us noticing
       continue;
     }
-    // Activate first, then focus the window. Use the tab's *current* window,
-    // since tabs can be moved between windows after we saw them.
-    await chrome.tabs.update(tabId, { active: true });
-    await chrome.windows.update(tab.windowId, { focused: true });
+    try {
+      // Activate first, then focus the window. Use the tab's *current* window,
+      // since tabs can be moved between windows after we saw them.
+      await chrome.tabs.update(tabId, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+    } catch (e) {
+      console.log('switching to tab', tabId, 'failed, trying the next one', e);
+      continue;
+    }
+    // Record the switch right away instead of waiting for onActivated /
+    // onFocusChanged, so that a quick second key press toggles back.
+    touch(tabId);
     return;
   }
   console.log('no previous tab to switch to');
 }
+
+/**
+ * Key presses are handled one at a time. Otherwise a quick double press runs
+ * two switches concurrently that both start from the same current tab and
+ * end up in the same place, instead of toggling there and back.
+ */
+let switching: Promise<void> = Promise.resolve();
 
 chrome.commands.onCommand.addListener((command: string) => {
   if (command !== 'previous-tab') {
     console.error('unknown command', command);
     return;
   }
-  activatePreviousTab();
+  switching = switching.then(activatePreviousTab).catch(e => console.error('switching tabs failed', e));
 });
 
-/** Seed the list with the visible tab when the browser or extension starts. */
+/**
+ * Seeds the list with the visible tab whenever the worker starts, so the
+ * shortcut works right after the extension is installed, updated or
+ * re-enabled (all of which clear session storage). The visible tab is by
+ * definition the most recently used one, so this is also right on any other
+ * wake-up.
+ */
 async function seed() {
   await ready;
   const current = await currentTabId();
   if (current !== undefined) touch(current);
 }
-chrome.runtime.onStartup.addListener(seed);
-chrome.runtime.onInstalled.addListener(seed);
+seed();
 
 export { };
