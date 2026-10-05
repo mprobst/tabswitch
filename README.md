@@ -27,6 +27,9 @@ keybinding via `More Tools -> Extensions -> (Hotdog Menu) Keybindings`.
 
 ### Tests
 
+`npm test` runs fast unit tests (no browser needed) against an in-memory fake of
+the Chrome APIs; see `test/unit`.
+
 `npm run test:e2e` runs end-to-end tests in a real Chromium (Playwright's
 build; `npx playwright-core install chromium` downloads it, or set
 `CHROME_PATH`). Each test starts a fresh browser with a temporary profile,

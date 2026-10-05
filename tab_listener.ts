@@ -107,11 +107,10 @@ chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
   await ready;
   const i = mru.indexOf(removedTabId);
   if (i < 0) return;
-  mru.splice(i, 1, addedTabId);
   // The new ID may already have been recorded (e.g. it was activated before
-  // this event arrived); keep only its most recent slot.
-  const dup = mru.indexOf(addedTabId, i + 1);
-  if (dup >= 0) mru.splice(dup, 1);
+  // this event arrived); if so, that more recent slot wins.
+  if (mru.includes(addedTabId)) mru.splice(i, 1);
+  else mru.splice(i, 1, addedTabId);
   save();
 });
 
