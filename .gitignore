@@ -3,3 +3,4 @@ node_modules
 tabswitch.zip
 test-results
 playwright-report
+.env

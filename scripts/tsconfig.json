@@ -1,0 +1,5 @@
+{
+  // Release tooling: same settings as the tests.
+  "extends": "../test/tsconfig.json",
+  "include": ["*.ts"]
+}
