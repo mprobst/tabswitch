@@ -17,7 +17,7 @@ const MODULE_URL = process.env.TAB_LISTENER
   : new URL('../../tab_listener.js', import.meta.url).href;
 
 // The extension logs a lot; keep the test output readable.
-if (!process.env.DEBUG) console.log = () => { };
+if (!process.env.DEBUG) console.log = () => {};
 
 describe('tab_listener', () => {
   let fake: FakeChrome;
@@ -62,7 +62,10 @@ describe('tab_listener', () => {
 
   test('works right after the extension was installed', async () => {
     // The extension is installed while the initial tab is active.
-    const { windowId, tabIds: [initial] } = fake.addWindow();
+    const {
+      windowId,
+      tabIds: [initial],
+    } = fake.addWindow();
     await start();
     const t1 = fake.addTab(windowId, { active: true });
     await fake.settle();
@@ -71,7 +74,9 @@ describe('tab_listener', () => {
   });
 
   test('toggles after the service worker was restarted', async () => {
-    const { tabIds: [, t2, t3] } = fake.addWindow({ tabs: 3 });
+    const {
+      tabIds: [, t2, t3],
+    } = fake.addWindow({ tabs: 3 });
     await start();
     await activate(t2);
     await activate(t3);
@@ -83,7 +88,9 @@ describe('tab_listener', () => {
   });
 
   test('a key press that wakes the worker works while storage is slow', async () => {
-    const { tabIds: [t1, t2] } = fake.addWindow({ tabs: 2 });
+    const {
+      tabIds: [t1, t2],
+    } = fake.addWindow({ tabs: 2 });
     await start();
     await activate(t2);
     fake.stopWorker();
@@ -95,7 +102,9 @@ describe('tab_listener', () => {
   });
 
   test('a tab activation that wakes the worker keeps the history', async () => {
-    const { tabIds: [, t2, t3] } = fake.addWindow({ tabs: 3 });
+    const {
+      tabIds: [, t2, t3],
+    } = fake.addWindow({ tabs: 3 });
     await start();
     await activate(t2);
     fake.stopWorker();
@@ -124,7 +133,9 @@ describe('tab_listener', () => {
   });
 
   test('skips a tab that was closed', async () => {
-    const { tabIds: [t1, t2, t3] } = fake.addWindow({ tabs: 3 });
+    const {
+      tabIds: [t1, t2, t3],
+    } = fake.addWindow({ tabs: 3 });
     await start();
     await activate(t2);
     await activate(t3);
@@ -134,18 +145,22 @@ describe('tab_listener', () => {
   });
 
   test('skips a tab that was closed while the worker was not running', async () => {
-    const { tabIds: [t1, t2, t3] } = fake.addWindow({ tabs: 3 });
+    const {
+      tabIds: [t1, t2, t3],
+    } = fake.addWindow({ tabs: 3 });
     await start();
     await activate(t2);
     await activate(t3);
     fake.stopWorker();
-    fake.closeTab(t2);  // nobody is listening
+    fake.closeTab(t2); // nobody is listening
     await start();
     assert.equal((await press())?.tabId, t1);
   });
 
   test('closing a tab visited in between does not make "previous" the current tab', async () => {
-    const { tabIds: [t1, t2, t3] } = fake.addWindow({ tabs: 3 });
+    const {
+      tabIds: [t1, t2, t3],
+    } = fake.addWindow({ tabs: 3 });
     await start();
     await activate(t2);
     await activate(t3);
@@ -158,11 +173,13 @@ describe('tab_listener', () => {
   });
 
   test('closing the active tab', async () => {
-    const { tabIds: [t1, t2, t3] } = fake.addWindow({ tabs: 3 });
+    const {
+      tabIds: [t1, t2, t3],
+    } = fake.addWindow({ tabs: 3 });
     await start();
     await activate(t2);
     await activate(t3);
-    fake.closeTab(t3);  // Chrome activates the neighbour, t2
+    fake.closeTab(t3); // Chrome activates the neighbour, t2
     await fake.settle();
     assert.equal(fake.current()?.tabId, t2);
     assert.equal((await press())?.tabId, t1);
@@ -207,7 +224,10 @@ describe('tab_listener', () => {
   });
 
   test('ignores focus moving to another application', async () => {
-    const { windowId, tabIds: [t1, t2] } = fake.addWindow({ tabs: 2 });
+    const {
+      windowId,
+      tabIds: [t1, t2],
+    } = fake.addWindow({ tabs: 2 });
     await start();
     await activate(t2);
     fake.blurAll();
@@ -256,7 +276,9 @@ describe('tab_listener', () => {
   });
 
   test('two key presses in quick succession toggle there and back', async () => {
-    const { tabIds: [t1, t2] } = fake.addWindow({ tabs: 2 });
+    const {
+      tabIds: [t1, t2],
+    } = fake.addWindow({ tabs: 2 });
     await start();
     await activate(t2);
     fake.pressShortcut();
@@ -271,7 +293,9 @@ describe('tab_listener', () => {
   });
 
   test('a replaced tab keeps its slot in the history', async () => {
-    const { tabIds: [, t2, t3, t4] } = fake.addWindow({ tabs: 4 });
+    const {
+      tabIds: [, t2, t3, t4],
+    } = fake.addWindow({ tabs: 4 });
     await start();
     await activate(t2);
     await activate(t3);
@@ -283,7 +307,9 @@ describe('tab_listener', () => {
   });
 
   test('a replaced tab keeps its slot when the replacement wakes the worker', async () => {
-    const { tabIds: [, t2, t3, t4] } = fake.addWindow({ tabs: 4 });
+    const {
+      tabIds: [, t2, t3, t4],
+    } = fake.addWindow({ tabs: 4 });
     await start();
     await activate(t2);
     await activate(t3);
@@ -297,7 +323,9 @@ describe('tab_listener', () => {
   });
 
   test('a replaced tab that is activated right after is not listed twice', async () => {
-    const { tabIds: [t1, t2] } = fake.addWindow({ tabs: 2 });
+    const {
+      tabIds: [t1, t2],
+    } = fake.addWindow({ tabs: 2 });
     await start();
     await activate(t2);
     const t2New = fake.replaceTab(t2, { activation: 'after' });
@@ -308,7 +336,9 @@ describe('tab_listener', () => {
   });
 
   test('a replaced tab that was activated before the replacement is not listed twice', async () => {
-    const { tabIds: [t1, t2] } = fake.addWindow({ tabs: 2 });
+    const {
+      tabIds: [t1, t2],
+    } = fake.addWindow({ tabs: 2 });
     await start();
     await activate(t2);
     const t2New = fake.replaceTab(t2, { activation: 'before' });

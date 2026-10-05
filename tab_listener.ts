@@ -37,7 +37,9 @@ const loadMru: Promise<void> = (async () => {
 })();
 
 function save() {
-  chrome.storage.session.set({ mru: mruTabIds }).catch(e => console.error('saving MRU failed', e));
+  chrome.storage.session
+    .set({ mru: mruTabIds })
+    .catch((e) => console.error('saving MRU failed', e));
 }
 
 /** Moves (or adds) the given tab to the front of the MRU list. */
@@ -71,9 +73,9 @@ async function touchActiveTabOf(windowId: number) {
 async function currentTabId(): Promise<TabId | undefined> {
   try {
     const win = await chrome.windows.getLastFocused({ populate: true, windowTypes: ['normal'] });
-    return win.tabs?.find(t => t.active)?.id;
+    return win.tabs?.find((t) => t.active)?.id;
   } catch (e) {
-    return undefined;  // no normal windows open
+    return undefined; // no normal windows open
   }
 }
 
@@ -95,11 +97,14 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
  * (a Meet picture-in-picture or popup window, devtools, another application)
  * arrives as WINDOW_ID_NONE and is ignored.
  */
-chrome.windows.onFocusChanged.addListener(async (windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-  await loadMru;
-  await touchActiveTabOf(windowId);
-}, { windowTypes: ['normal'] });
+chrome.windows.onFocusChanged.addListener(
+  async (windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+    await loadMru;
+    await touchActiveTabOf(windowId);
+  },
+  { windowTypes: ['normal'] },
+);
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await loadMru;
@@ -139,7 +144,7 @@ async function activatePreviousTab() {
     try {
       tab = await chrome.tabs.get(tabId);
     } catch (e) {
-      forget(tabId);  // closed without us noticing
+      forget(tabId); // closed without us noticing
       continue;
     }
     try {
@@ -171,7 +176,9 @@ chrome.commands.onCommand.addListener((command: string) => {
     console.error('unknown command', command);
     return;
   }
-  switchingCommandQueue = switchingCommandQueue.then(activatePreviousTab).catch(e => console.error('switching tabs failed', e));
+  switchingCommandQueue = switchingCommandQueue
+    .then(activatePreviousTab)
+    .catch((e) => console.error('switching tabs failed', e));
 });
 
 /**
@@ -188,4 +195,4 @@ async function seed() {
 }
 seed();
 
-export { };
+export {};

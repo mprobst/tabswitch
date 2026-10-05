@@ -7,13 +7,13 @@
     "type": "module"
   },
   "commands": {
-    "previous-tab" : {
+    "previous-tab": {
       "suggested_key": {
         "default": "Ctrl+Q",
         "mac": "MacCtrl+Q"
       },
-      "description": "Switch to the previously active tab"    
-   }
+      "description": "Switch to the previously active tab"
+    }
   },
   "icons": {
     "128": "logo128.png"

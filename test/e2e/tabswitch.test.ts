@@ -13,7 +13,9 @@ test.describe('tabswitch', () => {
   test.skip(reason !== undefined, reason);
 
   test('toggles between the two most recent tabs', async ({ b }) => {
-    const { tabIds: [t1, t2] } = await b.newWindow(3);
+    const {
+      tabIds: [t1, t2],
+    } = await b.newWindow(3);
     await b.activate(t1);
     await b.activate(t2);
     b.key(SHORTCUT);
@@ -36,7 +38,9 @@ test.describe('tabswitch', () => {
   });
 
   test('toggles after the service worker was suspended', async ({ b }) => {
-    const { tabIds: [t1, t2] } = await b.newWindow(3);
+    const {
+      tabIds: [t1, t2],
+    } = await b.newWindow(3);
     await b.activate(t1);
     await b.activate(t2);
     await b.stopTarget();
@@ -46,7 +50,9 @@ test.describe('tabswitch', () => {
   });
 
   test('a tab activation that wakes the worker keeps the history', async ({ b }) => {
-    const { tabIds: [t1, t2, t3] } = await b.newWindow(3);
+    const {
+      tabIds: [t1, t2, t3],
+    } = await b.newWindow(3);
     await b.activate(t1);
     await b.activate(t2);
     await b.stopTarget();
@@ -69,7 +75,9 @@ test.describe('tabswitch', () => {
   });
 
   test('skips a closed tab', async ({ b }) => {
-    const { tabIds: [t1, t2, t3] } = await b.newWindow(3);
+    const {
+      tabIds: [t1, t2, t3],
+    } = await b.newWindow(3);
     await b.activate(t1);
     await b.activate(t2);
     await b.activate(t3);
@@ -78,8 +86,12 @@ test.describe('tabswitch', () => {
     await b.expectCurrent({ tabId: t1 });
   });
 
-  test('closing a tab visited in between does not make "previous" the current tab', async ({ b }) => {
-    const { tabIds: [t1, t2, t3] } = await b.newWindow(3);
+  test('closing a tab visited in between does not make "previous" the current tab', async ({
+    b,
+  }) => {
+    const {
+      tabIds: [t1, t2, t3],
+    } = await b.newWindow(3);
     await b.activate(t1);
     await b.activate(t2);
     await b.activate(t3);
@@ -91,7 +103,9 @@ test.describe('tabswitch', () => {
   });
 
   test('closing the active tab', async ({ b }) => {
-    const { tabIds: [t1, t2, t3] } = await b.newWindow(3);
+    const {
+      tabIds: [t1, t2, t3],
+    } = await b.newWindow(3);
     await b.activate(t1);
     await b.activate(t2);
     await b.activate(t3);
@@ -120,7 +134,10 @@ test.describe('tabswitch', () => {
     const [t1, t2] = w1.tabIds;
     await b.activate(t1);
     await b.activate(t2);
-    await b.drv(({ t1, w2 }) => chrome.tabs.move(t1, { windowId: w2, index: -1 }), { t1, w2: w2.windowId });
+    await b.drv(({ t1, w2 }) => chrome.tabs.move(t1, { windowId: w2, index: -1 }), {
+      t1,
+      w2: w2.windowId,
+    });
     // Moving t1 activated it in w2, but w1 still has focus.
     await b.expectCurrent({ windowId: w1.windowId, tabId: t2 });
     b.key(SHORTCUT);
@@ -142,7 +159,9 @@ test.describe('tabswitch', () => {
   });
 
   test('pressing the shortcut twice quickly returns to the starting tab', async ({ b }) => {
-    const { tabIds: [t1, t2] } = await b.newWindow(2);
+    const {
+      tabIds: [t1, t2],
+    } = await b.newWindow(2);
     await b.activate(t1);
     await b.activate(t2);
     b.key(`${SHORTCUT} ${SHORTCUT}`);
@@ -152,16 +171,21 @@ test.describe('tabswitch', () => {
   });
 
   test('a long history survives a worker restart', async ({ b }) => {
-    const { tabIds: [t1, t2, t3, t4] } = await b.newWindow(4);
+    const {
+      tabIds: [t1, t2, t3, t4],
+    } = await b.newWindow(4);
     await b.activate(t1);
     // Lots of switching, e.g. a busy hour of work. This used to exceed the
     // storage.sync write and size quotas, silently dropping later saves.
-    await b.drv(async ([t1, t2]) => {
-      for (let i = 0; i < 150; i++) {
-        await chrome.tabs.update(i % 2 ? t1 : t2, { active: true });
-        await new Promise((r) => setTimeout(r, 10));
-      }
-    }, [t1, t2]);
+    await b.drv(
+      async ([t1, t2]) => {
+        for (let i = 0; i < 150; i++) {
+          await chrome.tabs.update(i % 2 ? t1 : t2, { active: true });
+          await new Promise((r) => setTimeout(r, 10));
+        }
+      },
+      [t1, t2],
+    );
     await b.activate(t3);
     await b.activate(t4);
     await b.stopTarget();
