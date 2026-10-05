@@ -351,7 +351,7 @@ describe('tab_listener', () => {
     await start();
     for (const id of tabIds) fake.activateTab(id);
     await fake.settle();
-    const mru = fake.storage.session.data.mru;
+    const mru = fake.storage.session.data.mru as number[];
     assert.equal(mru.length, 100);
     assert.equal(mru[0], tabIds[119]);
     assert.equal(mru[99], tabIds[20]);

@@ -32,7 +32,10 @@ const loadMru: Promise<void> = (async () => {
   // when switching. Don't prune tabs that no longer exist here: if onReplaced
   // woke the worker, the replaced tab is already gone, but its slot must be
   // carried over to the new tab ID.
-  mruTabIds = Array.isArray(stored['mru']) ? stored['mru'] : [];
+  const loaded: unknown = stored['mru'];
+  mruTabIds = Array.isArray(loaded)
+    ? loaded.filter((id): id is TabId => typeof id === 'number')
+    : [];
   console.log('loaded MRU list with', mruTabIds.length, 'tabs');
 })();
 
@@ -74,7 +77,7 @@ async function currentTabId(): Promise<TabId | undefined> {
   try {
     const win = await chrome.windows.getLastFocused({ populate: true, windowTypes: ['normal'] });
     return win.tabs?.find((t) => t.active)?.id;
-  } catch (e) {
+  } catch {
     return undefined; // no normal windows open
   }
 }
@@ -143,7 +146,7 @@ async function activatePreviousTab() {
     let tab: chrome.tabs.Tab;
     try {
       tab = await chrome.tabs.get(tabId);
-    } catch (e) {
+    } catch {
       forget(tabId); // closed without us noticing
       continue;
     }
@@ -193,6 +196,6 @@ async function seed() {
   const current = await currentTabId();
   if (current !== undefined) touch(current);
 }
-seed();
+seed().catch((e) => console.error('seeding the MRU list failed', e));
 
 export {};
