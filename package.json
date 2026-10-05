@@ -1,5 +1,6 @@
 {
   "name": "tabswitch",
+  "version": "0.1.0",
   "private": true,
   "description": "Chrome extension to switch between the two most recently used tabs.",
   "license": "MIT",
@@ -8,25 +9,32 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p . && tsc -p test",
+    "typecheck": "tsc --noEmit -p . && tsc -p test && tsc -p scripts",
     "test": "tsc && tsc -p test && node --test 'test/unit/*.test.ts'",
-    "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json",
+    "build": "tsc",
     "test:e2e": "tsc && tsc -p test && playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "check": "npm run format:check && npm run lint && npm test"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
+    "bundle": "npm run build && rm -f tabswitch.zip && zip tabswitch.zip *.js logo*.png manifest.json",
+    "release": "node scripts/release.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.3.4",
     "@types/node": "^24",
+    "chrome-webstore-upload-cli": "^4.0.2",
     "eslint": "^10.12.0",
     "globals": "^17.13.0",
     "jiti": "^2.7.0",
     "prettier": "^3.9.9",
     "typescript": "^5.9",
     "typescript-eslint": "^8.71.1"
+  },
+  "webStore": {
+    "extensionId": "jpfcacngcfejgnoaobkgoojockhdlphi",
+    "publisherId": "5dfd71fd-09d2-4298-ac64-839bc6c44e2e"
   }
 }

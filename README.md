@@ -25,11 +25,30 @@ keybinding via `More Tools -> Extensions -> (Hotdog Menu) Keybindings`.
 
 Requires Node.js 24 (see `.nvmrc`). Run `npm install` first.
 
-- `npm run build` compiles the extension and creates `tabswitch.zip` for upload.
+- `npm run build` compiles the extension; `npm run bundle` also creates
+  `tabswitch.zip` for the Chrome Web Store.
 - `npm run check` runs everything that should pass before a commit: the
   formatting check, linting, type checks and unit tests.
 - `npm run format` formats all files with [Prettier](https://prettier.io);
   `npm run lint` runs [ESLint](https://eslint.org) with typescript-eslint.
+
+### Releasing
+
+`npm run release -- <patch|minor|major>` releases a new version from an
+up-to-date `main`. It runs `npm run check`, bumps the version in
+`manifest.json` and `package.json`, builds the zip, commits and tags
+`vX.Y.Z` with the commit subjects since the last release as notes, pushes,
+creates a GitHub release with the zip, and uploads the zip to the Chrome Web
+Store, where it is submitted for review. `--dry-run` stops after the checks
+and shows the new version and notes.
+
+The Web Store upload needs `CLIENT_ID`, `CLIENT_SECRET` and `REFRESH_TOKEN`
+in the environment or in a git-ignored `.env` file; see
+[chrome-webstore-upload-keys](https://github.com/fregante/chrome-webstore-upload-keys)
+for how to create them. The extension and publisher IDs are `webStore` in
+`package.json` (`PUBLISHER_ID` in the environment also works). `--no-store`
+skips the upload. The release also needs
+`gh` to be logged in.
 
 ### Tests
 
