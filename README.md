@@ -27,14 +27,17 @@ keybinding via `More Tools -> Extensions -> (Hotdog Menu) Keybindings`.
 
 ### Tests
 
-`npm test` runs fast unit tests (no browser needed) against an in-memory fake of
-the Chrome APIs; see `test/unit`.
+`npm test` runs fast unit tests (no browser needed, `node:test`) against an
+in-memory fake of the Chrome APIs; see `test/unit`. `npm run typecheck`
+type-checks the extension and the tests. Tests are TypeScript, run directly
+by Node (type stripping) and by Playwright, without a build step.
 
-`npm run test:e2e` runs end-to-end tests in a real Chromium (Playwright's
-build; `npx playwright-core install chromium` downloads it, or set
-`CHROME_PATH`). Each test starts a fresh browser with a temporary profile,
-loads the extension plus a small driver extension (`test/driver-ext`) and
-presses the actual keyboard shortcut. They need:
+`npm run test:e2e` runs end-to-end tests with [Playwright
+Test](https://playwright.dev/docs/intro) in a real Chromium
+(`npx playwright install chromium` downloads it, or set `CHROME_PATH`). Each
+test starts a fresh browser with a temporary profile, loads the extension plus
+a small driver extension (`test/driver-ext`) and presses the actual keyboard
+shortcut. They need:
 
 - an X display on which window focus works; headless Chromium reports every
   window as focused. Use Xvfb: `xvfb-run -a npm run test:e2e`.
@@ -42,4 +45,6 @@ presses the actual keyboard shortcut. They need:
   events.
 
 On Debian/Ubuntu: `sudo apt install xvfb xdotool`. Set `EXT_DIR` to run the
-tests against a different build of the extension.
+tests against a different build of the extension. For failed tests, the
+report (`npx playwright show-report`) includes the extension's console output
+and the final window and tab state.

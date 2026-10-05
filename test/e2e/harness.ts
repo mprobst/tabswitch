@@ -21,7 +21,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type BrowserContext, type CDPSession, type Worker } from 'playwright-core';
+import {
+  test as base,
+  chromium,
+  expect,
+  type BrowserContext,
+  type CDPSession,
+  type TestInfo,
+  type Worker,
+} from '@playwright/test';
 
 /** A service worker version, as reported by the CDP ServiceWorker domain. */
 type WorkerVersion = {
@@ -43,6 +51,20 @@ export const EXT_DIR = process.env.EXT_DIR ?? path.resolve(here, '../..');
 const DRIVER_DIR = path.resolve(here, '../driver-ext');
 const XDOTOOL = process.env.XDOTOOL ?? 'xdotool';
 
+/**
+ * How long to give the extension's event handlers after Chrome's state has
+ * changed. There is no black-box way to tell that the extension is done
+ * handling an event (its handlers make further async API calls), so actions
+ * that the next step depends on wait this long after their effect is visible.
+ */
+const HANDLER_GRACE_MS = 150;
+
+/**
+ * How long a value must stay unchanged in `expectToSettle`. Long enough for
+ * the extension to (wrongly) act on an event, e.g. close a tab it shouldn't.
+ */
+const STABLE_MS = 300;
+
 /** Returns a reason why e2e tests can't run here, or undefined if they can. */
 export function skipReason(): string | undefined {
   if (!process.env.DISPLAY) return 'no DISPLAY; run under xvfb-run';
@@ -57,38 +79,51 @@ export function skipReason(): string | undefined {
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Polls `fn` until it returns a truthy value or `timeout` ms pass. Returns the
- * last value either way, so callers can assert on it and get a useful diff.
+ * Asserts that `fn()` reaches `expected` (a value or asymmetric matcher, as
+ * for `toEqual`) and then keeps it for `stableFor` ms.
+ *
+ * `expect.poll` alone passes as soon as the value matches once, which proves
+ * nothing for "the extension leaves this alone" checks (it may not have acted
+ * yet) and misses overshooting (e.g. switching one tab too far).
  */
-export async function waitFor<T>(fn: () => T | Promise<T>, timeout = 3000): Promise<T> {
-  const deadline = Date.now() + timeout;
-  let value: T;
-  while (true) {
-    value = await fn();
-    if (value || Date.now() > deadline) return value;
+export async function expectToSettle(fn: () => Promise<unknown>, expected: unknown, options: SettleOptions) {
+  // A boxed step reports failures at the caller's line, not in here.
+  await base.step(`expect ${options.message} to settle`, () => settleAndHold(fn, expected, options), { box: true });
+}
+
+type SettleOptions = { message: string; stableFor?: number; timeout?: number };
+
+async function settleAndHold(
+  fn: () => Promise<unknown>,
+  expected: unknown,
+  { message, stableFor = STABLE_MS, timeout }: SettleOptions,
+) {
+  await expect.poll(fn, { message, timeout }).toEqual(expected);
+  const until = Date.now() + stableFor;
+  while (Date.now() < until) {
     await sleep(50);
+    expect(await fn(), `${message} (matched, but then changed)`).toEqual(expected);
   }
 }
 
 /**
- * Waits until `fn()` returns the same value for `quiet` ms, i.e. the browser
- * and the extension's event handlers have settled.
+ * Playwright Test `test` with a fresh browser per test, as the `b` fixture.
+ * On failure, the extension's console output and the final tab and window
+ * state are attached to the test report.
  */
-export async function settle<T>(fn: () => T | Promise<T>, quiet = 300, timeout = 3000): Promise<T> {
-  const deadline = Date.now() + timeout;
-  let last = JSON.stringify(await fn());
-  let since = Date.now();
-  while (Date.now() < deadline) {
-    await sleep(50);
-    const now = JSON.stringify(await fn());
-    if (now !== last) {
-      last = now;
-      since = Date.now();
-    } else if (Date.now() - since >= quiet) {
-      break;
-    }
-  }
-  return JSON.parse(last) as T;
+export function extensionTest(targetScript: string) {
+  return base.extend<{ b: Browser }>({
+    // eslint-disable-next-line no-empty-pattern
+    b: async ({}, use, testInfo) => {
+      const b = await Browser.launch({ targetScript });
+      try {
+        await use(b);
+      } finally {
+        if (testInfo.status !== testInfo.expectedStatus) await b.attachDiagnostics(testInfo);
+        await b.close();
+      }
+    },
+  });
 }
 
 export class Browser {
@@ -109,7 +144,12 @@ export class Browser {
       ],
     });
     const b = new Browser(ctx, userDataDir, targetScript);
-    await b.init();
+    try {
+      await b.init();
+    } catch (e) {
+      await b.close();
+      throw e;
+    }
     return b;
   }
 
@@ -118,6 +158,8 @@ export class Browser {
   targetScript: string;
   /** Service worker versions by id, as reported by the CDP ServiceWorker domain. */
   versions = new Map<string, WorkerVersion>();
+  /** Console output of the extensions' service workers. */
+  logs: string[] = [];
   /** The driver extension's service worker; set by `init()`. */
   driver!: Worker;
   /** A CDP session; set by `init()`. */
@@ -127,27 +169,44 @@ export class Browser {
     this.ctx = ctx;
     this.userDataDir = userDataDir;
     this.targetScript = targetScript;
+    ctx.on('console', (m) => {
+      const url = m.location().url;
+      if (url.startsWith('chrome-extension://')) this.logs.push(`[${m.type()}] ${path.basename(url)}: ${m.text()}`);
+    });
   }
 
   async init() {
-    const isDriver = (w: Worker) => w.url().endsWith('/driver.js');
-    let driver = this.ctx.serviceWorkers().find(isDriver);
-    while (!driver) {
-      const w = await this.ctx.waitForEvent('serviceworker');
-      if (isDriver(w)) driver = w;
-    }
-    this.driver = driver;
+    this.driver = await this.serviceWorker((w) => w.url().endsWith('/driver.js'), 'the test driver extension');
     const page = this.ctx.pages()[0];
     this.cdp = await this.ctx.newCDPSession(page);
     this.cdp.on('ServiceWorker.workerVersionUpdated', (e) => {
       for (const v of e.versions) this.versions.set(v.versionId, v as WorkerVersion);
     });
     await this.cdp.send('ServiceWorker.enable');
-    // Wait for the extension under test to have started, too.
-    await waitFor(() => this.targetVersion()?.runningStatus === 'running', 5000);
-    // The initial about:blank tab gets the first window; give the extension
-    // a moment to see it.
-    await sleep(300);
+    await expect
+      .poll(() => this.targetVersion()?.runningStatus, {
+        message: `service worker of the extension under test (${this.targetScript}) starts`,
+        timeout: 10_000,
+      })
+      .toBe('running');
+    // The browser's initial window and tab; let the extension see them.
+    await expect.poll(() => this.current(), { message: 'the initial window has focus' }).toMatchObject({
+      windowId: expect.any(Number),
+    });
+    await this.waitForHandlers();
+  }
+
+  /** Returns the service worker matching `predicate`, waiting for it to start if needed. */
+  private async serviceWorker(predicate: (w: Worker) => boolean, what: string): Promise<Worker> {
+    // Checking the existing workers and subscribing happen in the same tick,
+    // so a worker can't start in between unnoticed.
+    const existing = this.ctx.serviceWorkers().find(predicate);
+    if (existing) return existing;
+    try {
+      return await this.ctx.waitForEvent('serviceworker', { predicate, timeout: 10_000 });
+    } catch (e) {
+      throw new Error(`service worker of ${what} did not start`, { cause: e });
+    }
   }
 
   /** The (running or stopped) service worker version of the extension under test. */
@@ -172,20 +231,31 @@ export class Browser {
    * ~30s of inactivity. In-memory state is lost; the next event restarts it.
    */
   async stopTarget() {
-    const v = await waitFor(() => this.targetVersion());
-    if (!v) throw new Error('service worker not found');
+    const v = this.targetVersion();
+    if (!v) throw new Error(`no service worker found for ${this.targetScript}`);
     await this.cdp.send('ServiceWorker.stopWorker', { versionId: v.versionId });
-    const stopped = await waitFor(() => this.targetVersion()?.runningStatus === 'stopped', 5000);
-    if (!stopped) throw new Error('service worker did not stop');
-  }
-
-  isTargetRunning(): boolean {
-    return this.targetVersion()?.runningStatus === 'running';
+    await expect
+      .poll(() => this.targetVersion()?.runningStatus, {
+        message: `service worker of the extension under test (${this.targetScript}) stops`,
+        timeout: 5_000,
+      })
+      .toBe('stopped');
   }
 
   /** Sends real key presses to the focused X window, e.g. 'ctrl+q' or 'ctrl+q ctrl+q'. */
   key(combo: string) {
     execFileSync(XDOTOOL, ['key', '--delay', process.env.KEY_DELAY ?? '20', ...combo.split(' ')]);
+  }
+
+  /** Attaches the extensions' console output and the tab and window state to the test report. */
+  async attachDiagnostics(testInfo: TestInfo) {
+    await testInfo.attach('extension console', { body: this.logs.join('\n'), contentType: 'text/plain' });
+    try {
+      const windows = await this.drv(() => chrome.windows.getAll({ populate: true }));
+      await testInfo.attach('windows', { body: JSON.stringify(windows, null, 2), contentType: 'application/json' });
+    } catch (e) {
+      await testInfo.attach('windows', { body: `could not query windows: ${e}`, contentType: 'text/plain' });
+    }
   }
 
   async close() {
@@ -195,12 +265,12 @@ export class Browser {
 
   // ---- Tab and window helpers (all via the driver extension) ----
 
-  /** Opens a new normal window with `n` tabs and focuses it. */
+  /** Opens a new window with `n` tabs and waits for it to have focus (if `focused`). */
   async newWindow(
     n = 1,
     { type = 'normal', focused = true }: { type?: 'normal' | 'popup'; focused?: boolean } = {},
   ): Promise<NewWindow> {
-    return this.drv(
+    const w = await this.drv(
       async ({ n, type, focused }: { n: number; type: 'normal' | 'popup'; focused: boolean }): Promise<NewWindow> => {
         const urls = Array.from({ length: n }, (_, i) => `data:text/html,tab${i}`);
         const w = await chrome.windows.create({ url: urls, type, focused });
@@ -208,6 +278,8 @@ export class Browser {
       },
       { n, type, focused },
     );
+    if (focused) await this.reached({ windowId: w.windowId }, `new ${type} window ${w.windowId} has focus`);
+    return w;
   }
 
   /** Opens a new tab in the given window (not activated unless `active`). */
@@ -215,31 +287,39 @@ export class Browser {
     windowId: number,
     { active = false, url = 'data:text/html,tab' }: { active?: boolean; url?: string } = {},
   ): Promise<number> {
-    return this.drv(
+    const tabId = await this.drv(
       async ({ windowId, active, url }: { windowId: number; active: boolean; url: string }) =>
         (await chrome.tabs.create({ windowId, active, url })).id!,
       { windowId, active, url },
     );
+    if (active) await this.reached({ tabId }, `new tab ${tabId} is active`);
+    return tabId;
   }
 
   /** Like a user clicking on a tab: focuses its window and activates it. */
   async activate(tabId: number) {
-    await this.drv(async (tabId: number) => {
+    const windowId = await this.drv(async (tabId: number) => {
       const tab = await chrome.tabs.get(tabId);
       await chrome.windows.update(tab.windowId, { focused: true });
       await chrome.tabs.update(tabId, { active: true });
+      return tab.windowId;
     }, tabId);
-    await this.idle();
+    await this.reached({ windowId, tabId }, `tab ${tabId} is active in focused window ${windowId}`);
   }
 
   async focusWindow(windowId: number) {
     await this.drv((windowId: number) => chrome.windows.update(windowId, { focused: true }), windowId);
-    await this.idle();
+    await this.reached({ windowId }, `window ${windowId} has focus`);
   }
 
   async closeTab(tabId: number) {
     await this.drv((tabId: number) => chrome.tabs.remove(tabId), tabId);
-    await this.idle();
+    await expect
+      .poll(() => this.drv(async (id: number) => (await chrome.tabs.query({})).some((t) => t.id === id), tabId), {
+        message: `tab ${tabId} is closed`,
+      })
+      .toBe(false);
+    await this.waitForHandlers();
   }
 
   /** Returns {windowId, tabId} of the active tab in the focused window. */
@@ -253,14 +333,32 @@ export class Browser {
     });
   }
 
-  /** Waits for focus/activation state to stop changing. */
-  idle(): Promise<Current> {
-    return settle(() => this.current(), 200);
+  /**
+   * Waits until the focused window / active tab match `partial`, then gives
+   * the extension time to handle the events.
+   */
+  private async reached(partial: Partial<Current>, message: string) {
+    await expect.poll(() => this.current(), { message }).toMatchObject(partial);
+    await this.waitForHandlers();
   }
 
-  /** Presses the shortcut and waits for the result to settle. */
-  async pressAndSettle(combo: string): Promise<Current> {
-    this.key(combo);
-    return settle(() => this.current(), 300);
+  /**
+   * Gives the extension's event handlers time to finish, after the effect of
+   * an action has become visible (see HANDLER_GRACE_MS).
+   */
+  waitForHandlers() {
+    return sleep(HANDLER_GRACE_MS);
+  }
+
+  /**
+   * Asserts that the focused window / active tab end up matching `partial`
+   * and stay that way, e.g. after pressing the shortcut.
+   */
+  async expectCurrent(partial: Partial<Current>, message = 'active tab in the focused window') {
+    await base.step(
+      `expect ${message} to settle`,
+      () => settleAndHold(() => this.current(), expect.objectContaining(partial), { message }),
+      { box: true },
+    );
   }
 }
