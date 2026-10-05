@@ -25,10 +25,11 @@ const MAX_ENTRIES = 100;
  */
 const ready: Promise<void> = (async () => {
   const stored = await chrome.storage.session.get({ mru: [] });
-  const loaded: number[] = Array.isArray(stored['mru']) ? stored['mru'] : [];
-  // Drop tabs that were closed while we weren't looking.
-  const existing = new Set((await chrome.tabs.query({})).map(t => t.id));
-  mru = loaded.filter(id => existing.has(id));
+  // Closed tabs are removed by onRemoved (which wakes the worker), or skipped
+  // when switching. Don't prune tabs that no longer exist here: if onReplaced
+  // woke the worker, the replaced tab is already gone, but its slot must be
+  // carried over to the new tab ID.
+  mru = Array.isArray(stored['mru']) ? stored['mru'] : [];
   console.log('loaded MRU list with', mru.length, 'tabs');
 })();
 

@@ -283,6 +283,20 @@ describe('tab_listener', () => {
     assert.equal((await press()).tabId, t4);
   });
 
+  test('a replaced tab keeps its slot when the replacement wakes the worker', async () => {
+    const { tabIds: [, t2, t3, t4] } = fake.addWindow({ tabs: 4 });
+    await start();
+    await activate(t2);
+    await activate(t3);
+    await activate(t4);
+    fake.stopWorker();
+    await fake.startWorker(MODULE_URL);
+    const t3New = fake.replaceTab(t3);
+    await fake.settle();
+    assert.equal((await press()).tabId, t3New);
+    assert.equal((await press()).tabId, t4);
+  });
+
   test('a replaced tab that is activated right after is not listed twice', async () => {
     const { tabIds: [t1, t2] } = fake.addWindow({ tabs: 2 });
     await start();
