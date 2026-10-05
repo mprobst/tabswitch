@@ -21,7 +21,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { chromium, type BrowserContext, type CDPSession, type Worker } from 'playwright-core';
+
+/** A service worker version, as reported by the CDP ServiceWorker domain. */
+type WorkerVersion = {
+  versionId: string;
+  scriptURL: string;
+  runningStatus: 'stopped' | 'starting' | 'running' | 'stopping';
+};
+
+/** Result of `Browser.current()`: the active tab of the focused window. */
+export type Current =
+  | { windowId: number; tabId: number | null }
+  | { windowId: null; tabId: null; focusedCount: number };
+
+/** A window as returned by `Browser.newWindow()`. */
+export type NewWindow = { windowId: number; tabIds: number[] };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const EXT_DIR = process.env.EXT_DIR ?? path.resolve(here, '../..');
@@ -29,7 +44,7 @@ const DRIVER_DIR = path.resolve(here, '../driver-ext');
 const XDOTOOL = process.env.XDOTOOL ?? 'xdotool';
 
 /** Returns a reason why e2e tests can't run here, or undefined if they can. */
-export function skipReason() {
+export function skipReason(): string | undefined {
   if (!process.env.DISPLAY) return 'no DISPLAY; run under xvfb-run';
   try {
     execFileSync(XDOTOOL, ['version'], { stdio: 'ignore' });
@@ -39,15 +54,15 @@ export function skipReason() {
   return undefined;
 }
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Polls `fn` until it returns a truthy value or `timeout` ms pass. Returns the
  * last value either way, so callers can assert on it and get a useful diff.
  */
-export async function waitFor(fn, timeout = 3000) {
+export async function waitFor<T>(fn: () => T | Promise<T>, timeout = 3000): Promise<T> {
   const deadline = Date.now() + timeout;
-  let value;
+  let value: T;
   while (true) {
     value = await fn();
     if (value || Date.now() > deadline) return value;
@@ -59,7 +74,7 @@ export async function waitFor(fn, timeout = 3000) {
  * Waits until `fn()` returns the same value for `quiet` ms, i.e. the browser
  * and the extension's event handlers have settled.
  */
-export async function settle(fn, quiet = 300, timeout = 3000) {
+export async function settle<T>(fn: () => T | Promise<T>, quiet = 300, timeout = 3000): Promise<T> {
   const deadline = Date.now() + timeout;
   let last = JSON.stringify(await fn());
   let since = Date.now();
@@ -73,11 +88,11 @@ export async function settle(fn, quiet = 300, timeout = 3000) {
       break;
     }
   }
-  return JSON.parse(last);
+  return JSON.parse(last) as T;
 }
 
 export class Browser {
-  static async launch({ extDir = EXT_DIR, targetScript } = {}) {
+  static async launch({ extDir = EXT_DIR, targetScript }: { extDir?: string; targetScript: string }): Promise<Browser> {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ext-e2e-'));
     const extensions = `${extDir},${DRIVER_DIR}`;
     const ctx = await chromium.launchPersistentContext(userDataDir, {
@@ -98,25 +113,34 @@ export class Browser {
     return b;
   }
 
-  constructor(ctx, userDataDir, targetScript) {
+  ctx: BrowserContext;
+  userDataDir: string;
+  targetScript: string;
+  /** Service worker versions by id, as reported by the CDP ServiceWorker domain. */
+  versions = new Map<string, WorkerVersion>();
+  /** The driver extension's service worker; set by `init()`. */
+  driver!: Worker;
+  /** A CDP session; set by `init()`. */
+  cdp!: CDPSession;
+
+  constructor(ctx: BrowserContext, userDataDir: string, targetScript: string) {
     this.ctx = ctx;
     this.userDataDir = userDataDir;
     this.targetScript = targetScript;
-    /** Service worker versions by id, as reported by the CDP ServiceWorker domain. */
-    this.versions = new Map();
   }
 
   async init() {
-    const isDriver = (w) => w.url().endsWith('/driver.js');
-    this.driver = this.ctx.serviceWorkers().find(isDriver);
-    while (!this.driver) {
+    const isDriver = (w: Worker) => w.url().endsWith('/driver.js');
+    let driver = this.ctx.serviceWorkers().find(isDriver);
+    while (!driver) {
       const w = await this.ctx.waitForEvent('serviceworker');
-      if (isDriver(w)) this.driver = w;
+      if (isDriver(w)) driver = w;
     }
+    this.driver = driver;
     const page = this.ctx.pages()[0];
     this.cdp = await this.ctx.newCDPSession(page);
     this.cdp.on('ServiceWorker.workerVersionUpdated', (e) => {
-      for (const v of e.versions) this.versions.set(v.versionId, v);
+      for (const v of e.versions) this.versions.set(v.versionId, v as WorkerVersion);
     });
     await this.cdp.send('ServiceWorker.enable');
     // Wait for the extension under test to have started, too.
@@ -127,7 +151,7 @@ export class Browser {
   }
 
   /** The (running or stopped) service worker version of the extension under test. */
-  targetVersion() {
+  targetVersion(): WorkerVersion | undefined {
     for (const v of this.versions.values()) {
       if (v.scriptURL.endsWith('/' + this.targetScript)) return v;
     }
@@ -135,7 +159,11 @@ export class Browser {
   }
 
   /** Evaluates `fn(arg)` in the driver extension's service worker. */
-  drv(fn, arg) {
+  drv<R>(fn: () => R | Promise<R>): Promise<R>;
+  drv<A, R>(fn: (arg: A) => R | Promise<R>, arg: A): Promise<R>;
+  drv(fn: (arg?: any) => unknown, arg?: unknown): Promise<unknown> {
+    // The overloads above give callers precise types; Playwright's own
+    // generics can't express the optional argument.
     return this.driver.evaluate(fn, arg);
   }
 
@@ -145,17 +173,18 @@ export class Browser {
    */
   async stopTarget() {
     const v = await waitFor(() => this.targetVersion());
+    if (!v) throw new Error('service worker not found');
     await this.cdp.send('ServiceWorker.stopWorker', { versionId: v.versionId });
     const stopped = await waitFor(() => this.targetVersion()?.runningStatus === 'stopped', 5000);
     if (!stopped) throw new Error('service worker did not stop');
   }
 
-  isTargetRunning() {
+  isTargetRunning(): boolean {
     return this.targetVersion()?.runningStatus === 'running';
   }
 
   /** Sends real key presses to the focused X window, e.g. 'ctrl+q' or 'ctrl+q ctrl+q'. */
-  key(combo) {
+  key(combo: string) {
     execFileSync(XDOTOOL, ['key', '--delay', process.env.KEY_DELAY ?? '20', ...combo.split(' ')]);
   }
 
@@ -167,28 +196,35 @@ export class Browser {
   // ---- Tab and window helpers (all via the driver extension) ----
 
   /** Opens a new normal window with `n` tabs and focuses it. */
-  async newWindow(n = 1, { type = 'normal', focused = true } = {}) {
+  async newWindow(
+    n = 1,
+    { type = 'normal', focused = true }: { type?: 'normal' | 'popup'; focused?: boolean } = {},
+  ): Promise<NewWindow> {
     return this.drv(
-      async ({ n, type, focused }) => {
+      async ({ n, type, focused }: { n: number; type: 'normal' | 'popup'; focused: boolean }): Promise<NewWindow> => {
         const urls = Array.from({ length: n }, (_, i) => `data:text/html,tab${i}`);
         const w = await chrome.windows.create({ url: urls, type, focused });
-        return { windowId: w.id, tabIds: w.tabs.map((t) => t.id) };
+        return { windowId: w!.id!, tabIds: w!.tabs!.map((t) => t.id!) };
       },
       { n, type, focused },
     );
   }
 
   /** Opens a new tab in the given window (not activated unless `active`). */
-  async newTab(windowId, { active = false, url = 'data:text/html,tab' } = {}) {
+  async newTab(
+    windowId: number,
+    { active = false, url = 'data:text/html,tab' }: { active?: boolean; url?: string } = {},
+  ): Promise<number> {
     return this.drv(
-      async ({ windowId, active, url }) => (await chrome.tabs.create({ windowId, active, url })).id,
+      async ({ windowId, active, url }: { windowId: number; active: boolean; url: string }) =>
+        (await chrome.tabs.create({ windowId, active, url })).id!,
       { windowId, active, url },
     );
   }
 
   /** Like a user clicking on a tab: focuses its window and activates it. */
-  async activate(tabId) {
-    await this.drv(async (tabId) => {
+  async activate(tabId: number) {
+    await this.drv(async (tabId: number) => {
       const tab = await chrome.tabs.get(tabId);
       await chrome.windows.update(tab.windowId, { focused: true });
       await chrome.tabs.update(tabId, { active: true });
@@ -196,34 +232,34 @@ export class Browser {
     await this.idle();
   }
 
-  async focusWindow(windowId) {
-    await this.drv((windowId) => chrome.windows.update(windowId, { focused: true }), windowId);
+  async focusWindow(windowId: number) {
+    await this.drv((windowId: number) => chrome.windows.update(windowId, { focused: true }), windowId);
     await this.idle();
   }
 
-  async closeTab(tabId) {
-    await this.drv((tabId) => chrome.tabs.remove(tabId), tabId);
+  async closeTab(tabId: number) {
+    await this.drv((tabId: number) => chrome.tabs.remove(tabId), tabId);
     await this.idle();
   }
 
   /** Returns {windowId, tabId} of the active tab in the focused window. */
-  async current() {
-    return this.drv(async () => {
+  async current(): Promise<Current> {
+    return this.drv(async (): Promise<Current> => {
       const wins = await chrome.windows.getAll({ populate: true });
       const focused = wins.filter((w) => w.focused);
       if (focused.length !== 1) return { windowId: null, tabId: null, focusedCount: focused.length };
-      const tab = focused[0].tabs.find((t) => t.active);
-      return { windowId: focused[0].id, tabId: tab?.id ?? null };
+      const tab = focused[0].tabs?.find((t) => t.active);
+      return { windowId: focused[0].id!, tabId: tab?.id ?? null };
     });
   }
 
   /** Waits for focus/activation state to stop changing. */
-  idle() {
+  idle(): Promise<Current> {
     return settle(() => this.current(), 200);
   }
 
   /** Presses the shortcut and waits for the result to settle. */
-  async pressAndSettle(combo) {
+  async pressAndSettle(combo: string): Promise<Current> {
     this.key(combo);
     return settle(() => this.current(), 300);
   }

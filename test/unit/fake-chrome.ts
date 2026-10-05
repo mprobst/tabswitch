@@ -24,32 +24,38 @@ const WINDOW_ID_NONE = -1;
 /** Makes every module evaluation unique, across FakeChrome instances too (ES modules are cached by URL). */
 let workerCount = 0;
 
-/** @typedef {{id: number, type: string, focused: boolean}} FakeWindow */
-/** @typedef {{id: number, windowId: number, active: boolean}} FakeTab */
+type FakeWindow = { id: number; type: string; focused: boolean };
+type FakeTab = { id: number; windowId: number; active: boolean };
+type FakeTabSnapshot = FakeTab & { index: number };
+type FakeWindowSnapshot = FakeWindow & { tabs?: FakeTabSnapshot[] };
+type WindowFilter = { windowTypes?: string[] };
+type Listener = { fn: (...args: any[]) => unknown; filter?: WindowFilter };
+type TabQuery = { active?: boolean; windowId?: number; currentWindow?: boolean; lastFocusedWindow?: boolean };
 
 /** A `chrome.*.onSomething` event. */
 class FakeEvent {
-  /** @param {FakeChrome} env */
-  constructor(env) {
+  listeners: Listener[] = [];
+
+  env: FakeChrome;
+
+  constructor(env: FakeChrome) {
     this.env = env;
-    /** @type {{fn: Function, filter?: any}[]} */
-    this.listeners = [];
   }
 
-  addListener(fn, filter) {
+  addListener(fn: Listener['fn'], filter?: WindowFilter) {
     this.listeners.push({ fn, filter });
   }
 
-  removeListener(fn) {
+  removeListener(fn: Listener['fn']) {
     this.listeners = this.listeners.filter(l => l.fn !== fn);
   }
 
-  hasListener(fn) {
+  hasListener(fn: Listener['fn']) {
     return this.listeners.some(l => l.fn === fn);
   }
 
   /** Invokes all current listeners, asynchronously. */
-  fire(...args) {
+  fire(...args: unknown[]) {
     for (const listener of this.listeners) {
       const listenerArgs = this.argsFor(listener.filter, args);
       this.env.schedule(() => {
@@ -60,7 +66,7 @@ class FakeEvent {
   }
 
   /** Hook for events that deliver different arguments depending on the listener's filter. */
-  argsFor(filter, args) {
+  argsFor(filter: WindowFilter | undefined, args: unknown[]): unknown[] {
     return args;
   }
 }
@@ -70,8 +76,8 @@ class FakeEvent {
  * window that does not match is reported as WINDOW_ID_NONE.
  */
 class FakeFocusEvent extends FakeEvent {
-  argsFor(filter, [windowId]) {
-    const window = this.env.windows.get(windowId);
+  override argsFor(filter: WindowFilter | undefined, [windowId]: unknown[]): unknown[] {
+    const window = this.env.windows.get(windowId as number);
     if (filter?.windowTypes && window && !filter.windowTypes.includes(window.type)) {
       return [WINDOW_ID_NONE];
     }
@@ -81,19 +87,19 @@ class FakeFocusEvent extends FakeEvent {
 
 /** A `chrome.storage.*` area. Values are copied on the way in and out. */
 class FakeStorageArea {
-  /** @param {FakeChrome} env */
-  constructor(env) {
+  env: FakeChrome;
+  /** The stored items; survives worker restarts. */
+  data: Record<string, any> = {};
+
+  constructor(env: FakeChrome) {
     this.env = env;
-    /** The stored items; survives worker restarts. */
-    this.data = {};
   }
 
   /**
-   * @param {string | string[] | Record<string, any> | null | undefined} keys
-   *   Keys to read; an object also provides defaults for missing keys.
+   * @param keys Keys to read; an object also provides defaults for missing keys.
    */
-  get(keys) {
-    const result = {};
+  get(keys?: string | string[] | Record<string, any> | null): Promise<Record<string, any>> {
+    const result: Record<string, any> = {};
     if (keys == null) {
       Object.assign(result, this.data);
     } else if (typeof keys === 'string' || Array.isArray(keys)) {
@@ -109,61 +115,64 @@ class FakeStorageArea {
     return this.env.call(() => copy, this.env.storageGetDelay);
   }
 
-  /** @param {Record<string, any>} items */
-  set(items) {
+  set(items: Record<string, any>): Promise<void> {
     Object.assign(this.data, structuredClone(items));
     return this.env.call(() => undefined);
   }
 }
 
 export class FakeChrome {
+  windows = new Map<number, FakeWindow>();
+  /** All tabs; the order within a window is the tab order. */
+  tabs: FakeTab[] = [];
+  /** Window IDs, most recently focused first. */
+  focusOrder: number[] = [];
+  nextTabId = 1;
+  nextWindowId = 1001;
+
+  /**
+   * Artificial latency (ms) of `storage.*.get`, to reproduce the race where
+   * the event that woke the worker arrives before storage was loaded.
+   */
+  storageGetDelay = 0;
+  /** Exceptions thrown by event listeners. Tests should assert this stays empty. */
+  errors: unknown[] = [];
+  /** Number of in-flight API calls and event deliveries. */
+  pending = 0;
+
+  storage = { session: new FakeStorageArea(this), sync: new FakeStorageArea(this) };
+  onActivated = new FakeEvent(this);
+  onRemoved = new FakeEvent(this);
+  onReplaced = new FakeEvent(this);
+  onFocusChanged = new FakeFocusEvent(this);
+  onCommand = new FakeEvent(this);
+  onStartup = new FakeEvent(this);
+  onInstalled = new FakeEvent(this);
+  events: FakeEvent[] = [this.onActivated, this.onRemoved, this.onReplaced, this.onFocusChanged,
+    this.onCommand, this.onStartup, this.onInstalled];
+
+  /**
+   * The object to install as `globalThis.chrome`. It only implements the
+   * subset of the API that the extension uses, hence the loose type.
+   */
+  chrome: Record<string, any>;
+
   constructor() {
-    /** @type {Map<number, FakeWindow>} */
-    this.windows = new Map();
-    /** All tabs; the order within a window is the tab order. @type {FakeTab[]} */
-    this.tabs = [];
-    /** Window IDs, most recently focused first. @type {number[]} */
-    this.focusOrder = [];
-    this.nextTabId = 1;
-    this.nextWindowId = 1001;
-
-    /**
-     * Artificial latency (ms) of `storage.*.get`, to reproduce the race where
-     * the event that woke the worker arrives before storage was loaded.
-     */
-    this.storageGetDelay = 0;
-    /** Exceptions thrown by event listeners. Tests should assert this stays empty. @type {unknown[]} */
-    this.errors = [];
-    /** Number of in-flight API calls and event deliveries. */
-    this.pending = 0;
-
-    this.storage = { session: new FakeStorageArea(this), sync: new FakeStorageArea(this) };
-    this.onActivated = new FakeEvent(this);
-    this.onRemoved = new FakeEvent(this);
-    this.onReplaced = new FakeEvent(this);
-    this.onFocusChanged = new FakeFocusEvent(this);
-    this.onCommand = new FakeEvent(this);
-    this.onStartup = new FakeEvent(this);
-    this.onInstalled = new FakeEvent(this);
-    this.events = [this.onActivated, this.onRemoved, this.onReplaced, this.onFocusChanged,
-      this.onCommand, this.onStartup, this.onInstalled];
-
-    /** The object to install as `globalThis.chrome`. */
     this.chrome = {
       storage: this.storage,
       tabs: {
-        query: (q) => this.call(() => this.queryTabs(q)),
-        get: (id) => this.call(() => this.snapshotTab(this.tab(id))),
-        update: (id, props) => this.call(() => this.updateTab(id, props)),
+        query: (q?: TabQuery) => this.call(() => this.queryTabs(q)),
+        get: (id: number) => this.call(() => this.snapshotTab(this.tab(id))),
+        update: (id: number, props?: { active?: boolean }) => this.call(() => this.updateTab(id, props)),
         onActivated: this.onActivated,
         onRemoved: this.onRemoved,
         onReplaced: this.onReplaced,
       },
       windows: {
         WINDOW_ID_NONE,
-        get: (id, opts) => this.call(() => this.snapshotWindow(this.window(id), opts?.populate)),
-        getLastFocused: (opts) => this.call(() => this.lastFocused(opts)),
-        update: (id, props) => this.call(() => this.updateWindow(id, props)),
+        get: (id: number, opts?: { populate?: boolean }) => this.call(() => this.snapshotWindow(this.window(id), opts?.populate)),
+        getLastFocused: (opts?: { populate?: boolean } & WindowFilter) => this.call(() => this.lastFocused(opts)),
+        update: (id: number, props?: { focused?: boolean }) => this.call(() => this.updateWindow(id, props)),
         onFocusChanged: this.onFocusChanged,
       },
       commands: { onCommand: this.onCommand },
@@ -175,7 +184,9 @@ export class FakeChrome {
 
   /** Makes this the global `chrome`. */
   install() {
-    globalThis.chrome = this.chrome;
+    // The fake only implements part of the chrome API, so it can't be
+    // type-checked against the real `typeof chrome`; cast it.
+    globalThis.chrome = this.chrome as unknown as typeof chrome;
   }
 
   /** Drops all listeners, as if the service worker was terminated. */
@@ -190,15 +201,15 @@ export class FakeChrome {
    * event that wakes up a real worker is dispatched after this point, so fire
    * it (e.g. with `activateTab`) after awaiting this and before `settle()`.
    *
-   * @param {string} moduleUrl URL of the module (a file: URL).
+   * @param moduleUrl URL of the module (a file: URL).
    */
-  async startWorker(moduleUrl) {
+  async startWorker(moduleUrl: string) {
     this.install();
     await import(`${moduleUrl}?worker=${++workerCount}`);
   }
 
   /** Stops and starts the worker. Storage and the world persist. */
-  async restartWorker(moduleUrl) {
+  async restartWorker(moduleUrl: string) {
     this.stopWorker();
     await this.startWorker(moduleUrl);
   }
@@ -206,7 +217,7 @@ export class FakeChrome {
   // ---- Settling ----
 
   /** Runs `fn` as an asynchronous task, tracking it for `settle()`. */
-  schedule(fn) {
+  schedule(fn: () => unknown) {
     this.pending++;
     setTimeout(() => {
       Promise.resolve()
@@ -220,8 +231,8 @@ export class FakeChrome {
    * Runs an API call: `fn` takes effect immediately, but the promise only
    * settles after `delay` ms. Errors thrown by `fn` become rejections.
    */
-  call(fn, delay = 0) {
-    let result, error, failed = false;
+  call<T>(fn: () => T, delay = 0): Promise<T> {
+    let result: T | undefined, error: unknown, failed = false;
     try {
       result = fn();
     } catch (e) {
@@ -232,7 +243,7 @@ export class FakeChrome {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
         this.pending--;
-        if (failed) reject(error); else resolve(result);
+        if (failed) reject(error); else resolve(result as T);
       }, delay);
     });
   }
@@ -255,42 +266,39 @@ export class FakeChrome {
 
   // ---- World lookups ----
 
-  /** @returns {FakeTab} */
-  tab(id) {
+  tab(id: number): FakeTab {
     const tab = this.tabs.find(t => t.id === id);
     if (!tab) throw new Error(`No tab with id: ${id}.`);
     return tab;
   }
 
-  /** @returns {FakeWindow} */
-  window(id) {
+  window(id: number): FakeWindow {
     const window = this.windows.get(id);
     if (!window) throw new Error(`No window with id: ${id}`);
     return window;
   }
 
-  /** @returns {FakeTab[]} */
-  tabsOf(windowId) {
+  tabsOf(windowId: number): FakeTab[] {
     return this.tabs.filter(t => t.windowId === windowId);
   }
 
-  snapshotTab(tab) {
+  snapshotTab(tab: FakeTab): FakeTabSnapshot {
     return { ...tab, index: this.tabsOf(tab.windowId).indexOf(tab) };
   }
 
-  snapshotWindow(window, populate = false) {
-    const copy = { ...window };
+  snapshotWindow(window: FakeWindow, populate = false): FakeWindowSnapshot {
+    const copy: FakeWindowSnapshot = { ...window };
     if (populate) copy.tabs = this.tabsOf(window.id).map(t => this.snapshotTab(t));
     return copy;
   }
 
   /** The window that has focus (of any type), if any. */
-  focusedWindow() {
+  focusedWindow(): FakeWindow | undefined {
     return [...this.windows.values()].find(w => w.focused);
   }
 
   /** What the user is looking at: the focused window and its active tab, if any. */
-  current() {
+  current(): { windowId: number; tabId: number | undefined } | undefined {
     const window = this.focusedWindow();
     if (!window) return undefined;
     return { windowId: window.id, tabId: this.tabsOf(window.id).find(t => t.active)?.id };
@@ -298,7 +306,7 @@ export class FakeChrome {
 
   // ---- Implementations of the chrome.* calls ----
 
-  queryTabs(q = {}) {
+  queryTabs(q: TabQuery = {}) {
     const lastFocused = this.focusOrder.find(id => this.windows.has(id));
     return this.tabs
       .filter(t => q.active === undefined || t.active === q.active)
@@ -308,19 +316,19 @@ export class FakeChrome {
       .map(t => this.snapshotTab(t));
   }
 
-  updateTab(id, props = {}) {
+  updateTab(id: number, props: { active?: boolean } = {}) {
     const tab = this.tab(id);
     if (props.active) this.activate(tab);
     return this.snapshotTab(tab);
   }
 
-  updateWindow(id, props = {}) {
+  updateWindow(id: number, props: { focused?: boolean } = {}) {
     const window = this.window(id);
     if (props.focused) this.focus(window.id);
     return this.snapshotWindow(window);
   }
 
-  lastFocused({ populate = false, windowTypes } = {}) {
+  lastFocused({ populate = false, windowTypes }: { populate?: boolean } & WindowFilter = {}) {
     for (const id of this.focusOrder) {
       const window = this.windows.get(id);
       if (window && (!windowTypes || windowTypes.includes(window.type))) {
@@ -333,7 +341,7 @@ export class FakeChrome {
   // ---- State changes that fire events ----
 
   /** Makes the tab the active one of its window. Fires onActivated if that changed it. */
-  activate(tab) {
+  activate(tab: FakeTab) {
     if (tab.active) return;
     const previous = this.tabsOf(tab.windowId).find(t => t.active);
     for (const t of this.tabsOf(tab.windowId)) t.active = false;
@@ -342,7 +350,7 @@ export class FakeChrome {
   }
 
   /** Gives the window focus. Fires onFocusChanged if that changed it. */
-  focus(windowId) {
+  focus(windowId: number) {
     if (this.window(windowId).focused) return;
     for (const w of this.windows.values()) w.focused = w.id === windowId;
     this.focusOrder = [windowId, ...this.focusOrder.filter(id => id !== windowId)];
@@ -354,13 +362,13 @@ export class FakeChrome {
   /**
    * Opens a window with the given number of tabs; the first one is active. Like
    * a real new window, it takes focus unless `focused` is false.
-   * @returns {{windowId: number, tabIds: number[]}}
    */
-  addWindow({ type = 'normal', tabs = 1, focused = true } = {}) {
+  addWindow({ type = 'normal', tabs = 1, focused = true }: { type?: string; tabs?: number; focused?: boolean } = {}):
+    { windowId: number; tabIds: number[] } {
     const windowId = this.nextWindowId++;
     this.windows.set(windowId, { id: windowId, type, focused: false });
     this.focusOrder.push(windowId);
-    const tabIds = [];
+    const tabIds: number[] = [];
     for (let i = 0; i < tabs; i++) {
       const tab = { id: this.nextTabId++, windowId, active: i === 0 };
       this.tabs.push(tab);
@@ -372,7 +380,7 @@ export class FakeChrome {
   }
 
   /** Opens a tab at the end of the window; it becomes active if `active` is set. */
-  addTab(windowId, { active = false } = {}) {
+  addTab(windowId: number, { active = false }: { active?: boolean } = {}): number {
     this.window(windowId);
     const tab = { id: this.nextTabId++, windowId, active: false };
     this.tabs.push(tab);
@@ -381,12 +389,12 @@ export class FakeChrome {
   }
 
   /** The user selects a tab in its window's tab strip. Does not change window focus. */
-  activateTab(tabId) {
+  activateTab(tabId: number) {
     this.activate(this.tab(tabId));
   }
 
   /** The user focuses a window. */
-  focusWindow(windowId) {
+  focusWindow(windowId: number) {
     this.focus(windowId);
   }
 
@@ -397,7 +405,7 @@ export class FakeChrome {
   }
 
   /** Closes a tab. If it was active, Chrome activates its right (else left) neighbour. */
-  closeTab(tabId) {
+  closeTab(tabId: number) {
     const tab = this.tab(tabId);
     const siblings = this.tabsOf(tab.windowId);
     if (siblings.length === 1) return this.closeWindow(tab.windowId);
@@ -408,7 +416,7 @@ export class FakeChrome {
   }
 
   /** Closes a window and its tabs. If it had focus, the previously focused window gets it. */
-  closeWindow(windowId) {
+  closeWindow(windowId: number) {
     const window = this.window(windowId);
     for (const tab of this.tabsOf(windowId)) {
       this.tabs.splice(this.tabs.indexOf(tab), 1);
@@ -425,7 +433,7 @@ export class FakeChrome {
    * Moves a tab to the end of another window, where it becomes active. If it
    * was active in its old window, that window activates a neighbour.
    */
-  moveTab(tabId, windowId) {
+  moveTab(tabId: number, windowId: number) {
     const tab = this.tab(tabId);
     this.window(windowId);
     const siblings = this.tabsOf(tab.windowId);
@@ -446,11 +454,9 @@ export class FakeChrome {
    * may also be reported as activated (if the tab was active), either `after`
    * onReplaced or `before` it. In the latter case onReplaced arrives late
    * enough for the extension to have processed the activation already.
-   * @param {number} oldId
-   * @param {{activation?: 'none' | 'before' | 'after'}} [options]
-   * @returns {number} The new tab ID.
+   * @returns The new tab ID.
    */
-  replaceTab(oldId, { activation = 'none' } = {}) {
+  replaceTab(oldId: number, { activation = 'none' }: { activation?: 'none' | 'before' | 'after' } = {}): number {
     const tab = this.tab(oldId);
     const newId = this.nextTabId++;
     tab.id = newId;
@@ -466,7 +472,7 @@ export class FakeChrome {
   }
 
   /** Runs `fn` after a delay, counting as in flight for `settle()` meanwhile. */
-  after(ms, fn) {
+  after(ms: number, fn: () => void) {
     this.pending++;
     setTimeout(() => {
       this.pending--;

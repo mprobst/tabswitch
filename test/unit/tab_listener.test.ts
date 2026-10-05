@@ -1,6 +1,6 @@
 /**
  * Unit tests for the "previous tab" logic in tab_listener.js, against an
- * in-memory fake of the chrome APIs (see fake-chrome.mjs). No browser needed;
+ * in-memory fake of the chrome APIs (see fake-chrome.ts). No browser needed;
  * run with `npm test`. The scenarios mirror those in test/e2e.
  *
  * Set TAB_LISTENER to the absolute path of a different tab_listener.js to run
@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { FakeChrome } from './fake-chrome.mjs';
+import { FakeChrome } from './fake-chrome.ts';
 
 const MODULE_URL = process.env.TAB_LISTENER
   ? pathToFileURL(resolve(process.env.TAB_LISTENER)).href
@@ -21,14 +21,14 @@ if (!process.env.DEBUG) console.log = () => { };
 
 describe('tab_listener', () => {
   /** @type {FakeChrome} */
-  let fake;
+  let fake: FakeChrome;
   beforeEach(() => {
     fake = new FakeChrome();
   });
   afterEach(async () => {
     await fake.settle();
     fake.stopWorker();
-    delete globalThis.chrome;
+    Reflect.deleteProperty(globalThis, 'chrome');
     assert.deepEqual(fake.errors, [], 'event listeners threw');
   });
 
@@ -39,7 +39,7 @@ describe('tab_listener', () => {
   }
 
   /** The user selects a tab in the focused window. */
-  async function activate(tabId) {
+  async function activate(tabId: number) {
     fake.activateTab(tabId);
     await fake.settle();
   }
@@ -67,8 +67,8 @@ describe('tab_listener', () => {
     await start();
     const t1 = fake.addTab(windowId, { active: true });
     await fake.settle();
-    assert.equal((await press()).tabId, initial);
-    assert.equal((await press()).tabId, t1);
+    assert.equal((await press())?.tabId, initial);
+    assert.equal((await press())?.tabId, t1);
   });
 
   test('toggles after the service worker was restarted', async () => {
@@ -78,9 +78,9 @@ describe('tab_listener', () => {
     await activate(t3);
     await start();
     // The key press is the event that wakes the worker up.
-    assert.equal((await press()).tabId, t2);
-    assert.equal((await press()).tabId, t3);
-    assert.equal((await press()).tabId, t2);
+    assert.equal((await press())?.tabId, t2);
+    assert.equal((await press())?.tabId, t3);
+    assert.equal((await press())?.tabId, t2);
   });
 
   test('a key press that wakes the worker works while storage is slow', async () => {
@@ -92,7 +92,7 @@ describe('tab_listener', () => {
     await fake.startWorker(MODULE_URL);
     fake.pressShortcut();
     await fake.settle();
-    assert.equal(fake.current().tabId, t1);
+    assert.equal(fake.current()?.tabId, t1);
   });
 
   test('a tab activation that wakes the worker keeps the history', async () => {
@@ -107,9 +107,9 @@ describe('tab_listener', () => {
     fake.activateTab(t3);
     await fake.settle();
     fake.storageGetDelay = 0;
-    assert.equal((await press()).tabId, t2);
-    assert.equal((await press()).tabId, t3);
-    assert.equal((await press()).tabId, t2);
+    assert.equal((await press())?.tabId, t2);
+    assert.equal((await press())?.tabId, t3);
+    assert.equal((await press())?.tabId, t2);
   });
 
   test('switches across windows', async () => {
@@ -131,7 +131,7 @@ describe('tab_listener', () => {
     await activate(t3);
     fake.closeTab(t2);
     await fake.settle();
-    assert.equal((await press()).tabId, t1);
+    assert.equal((await press())?.tabId, t1);
   });
 
   test('skips a tab that was closed while the worker was not running', async () => {
@@ -142,7 +142,7 @@ describe('tab_listener', () => {
     fake.stopWorker();
     fake.closeTab(t2);  // nobody is listening
     await start();
-    assert.equal((await press()).tabId, t1);
+    assert.equal((await press())?.tabId, t1);
   });
 
   test('closing a tab visited in between does not make "previous" the current tab', async () => {
@@ -155,7 +155,7 @@ describe('tab_listener', () => {
     fake.closeTab(t3);
     await fake.settle();
     // History is t1, t2, t3, t2; with t3 gone the previous tab is t1.
-    assert.equal((await press()).tabId, t1);
+    assert.equal((await press())?.tabId, t1);
   });
 
   test('closing the active tab', async () => {
@@ -165,9 +165,9 @@ describe('tab_listener', () => {
     await activate(t3);
     fake.closeTab(t3);  // Chrome activates the neighbour, t2
     await fake.settle();
-    assert.equal(fake.current().tabId, t2);
-    assert.equal((await press()).tabId, t1);
-    assert.equal((await press()).tabId, t2);
+    assert.equal(fake.current()?.tabId, t2);
+    assert.equal((await press())?.tabId, t1);
+    assert.equal((await press())?.tabId, t2);
   });
 
   test('closing the only tab of a window goes back to the other window', async () => {
@@ -263,12 +263,12 @@ describe('tab_listener', () => {
     fake.pressShortcut();
     fake.pressShortcut();
     await fake.settle();
-    assert.equal(fake.current().tabId, t2);
+    assert.equal(fake.current()?.tabId, t2);
     fake.pressShortcut();
     fake.pressShortcut();
     fake.pressShortcut();
     await fake.settle();
-    assert.equal(fake.current().tabId, t1);
+    assert.equal(fake.current()?.tabId, t1);
   });
 
   test('a replaced tab keeps its slot in the history', async () => {
@@ -279,8 +279,8 @@ describe('tab_listener', () => {
     await activate(t4);
     const t3New = fake.replaceTab(t3);
     await fake.settle();
-    assert.equal((await press()).tabId, t3New);
-    assert.equal((await press()).tabId, t4);
+    assert.equal((await press())?.tabId, t3New);
+    assert.equal((await press())?.tabId, t4);
   });
 
   test('a replaced tab keeps its slot when the replacement wakes the worker', async () => {
@@ -293,8 +293,8 @@ describe('tab_listener', () => {
     await fake.startWorker(MODULE_URL);
     const t3New = fake.replaceTab(t3);
     await fake.settle();
-    assert.equal((await press()).tabId, t3New);
-    assert.equal((await press()).tabId, t4);
+    assert.equal((await press())?.tabId, t3New);
+    assert.equal((await press())?.tabId, t4);
   });
 
   test('a replaced tab that is activated right after is not listed twice', async () => {
@@ -304,8 +304,8 @@ describe('tab_listener', () => {
     const t2New = fake.replaceTab(t2, { activation: 'after' });
     await fake.settle();
     assert.deepEqual(fake.storage.session.data.mru, [t2New, t1]);
-    assert.equal((await press()).tabId, t1);
-    assert.equal((await press()).tabId, t2New);
+    assert.equal((await press())?.tabId, t1);
+    assert.equal((await press())?.tabId, t2New);
   });
 
   test('a replaced tab that was activated before the replacement is not listed twice', async () => {
@@ -327,7 +327,7 @@ describe('tab_listener', () => {
     assert.equal(mru[0], tabIds[119]);
     assert.equal(mru[99], tabIds[20]);
     await start();
-    assert.equal((await press()).tabId, tabIds[118]);
-    assert.equal((await press()).tabId, tabIds[119]);
+    assert.equal((await press())?.tabId, tabIds[118]);
+    assert.equal((await press())?.tabId, tabIds[119]);
   });
 });

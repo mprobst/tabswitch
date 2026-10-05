@@ -1,16 +1,15 @@
 /**
  * End-to-end tests for the "previous tab" shortcut, in a real browser. See
- * harness.mjs for requirements. Run with `xvfb-run -a npm run test:e2e`.
+ * harness.ts for requirements. Run with `xvfb-run -a npm run test:e2e`.
  */
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
-import { Browser, skipReason } from './harness.mjs';
+import { Browser, skipReason } from './harness.ts';
 
 const SHORTCUT = 'ctrl+q';
 
 describe('tabswitch', { skip: skipReason() }, () => {
-  /** @type {Browser} */
-  let b;
+  let b: Browser;
   beforeEach(async () => {
     b = await Browser.launch({ targetScript: 'tab_listener.js' });
   });
@@ -30,6 +29,7 @@ describe('tabswitch', { skip: skipReason() }, () => {
   test('works right after the extension was installed', async () => {
     // The extension was installed while the browser's initial tab was active.
     const { windowId, tabId: initial } = await b.current();
+    assert.ok(windowId !== null, 'expected exactly one focused window');
     const t1 = await b.newTab(windowId, { active: true });
     await b.idle();
     assert.equal((await b.pressAndSettle(SHORTCUT)).tabId, initial);
