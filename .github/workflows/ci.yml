@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Format, lint, type-check, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run bundle
+      - uses: actions/upload-artifact@v7
+        with:
+          name: extension
+          path: tabswitch.zip
+
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Window focus needs a real X display; Xvfb is preinstalled on GitHub's
+      # Ubuntu runners. Extension shortcuts need real key presses, so xdotool
+      # (see test/e2e/harness.ts). Its packages, including any dependencies
+      # the runner lacks, are cached, so later runs skip `apt-get update`.
+      - name: Cache xdotool packages
+        id: xdotool-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/xdotool-debs
+          key: xdotool-${{ runner.arch }}-${{ env.ImageOS }}-${{ env.ImageVersion }}
+      - name: Download xdotool packages
+        if: steps.xdotool-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --download-only xdotool
+          mkdir -p ~/xdotool-debs
+          cp /var/cache/apt/archives/*.deb ~/xdotool-debs/
+      - run: sudo dpkg --install ~/xdotool-debs/*.deb
+      # Playwright's Chromium, cached per Playwright version. Its system
+      # dependencies are already there for the preinstalled Chrome.
+      - id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      - run: npx playwright install chromium
+      - run: xvfb-run -a npm run test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/

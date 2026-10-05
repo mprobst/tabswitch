@@ -7,8 +7,9 @@
  *  - An X display on which window focus works (headless Chromium reports every
  *    window as focused, which makes it useless here). Use Xvfb, e.g.
  *    `xvfb-run -a npm run test:e2e`.
- *  - `xdotool`, to send real key presses: extension keyboard shortcuts are
- *    handled by the browser UI and don't fire for synthetic CDP key events.
+ *  - For tests that press keys (`skipReason({ keyPresses: true })`): `xdotool`,
+ *    to send real key presses. Extension keyboard shortcuts are handled by the
+ *    browser UI and don't fire for synthetic CDP key events.
  *  - A Chromium / Chrome for Testing build (branded Chrome ignores
  *    --load-extension). Defaults to Playwright's bundled Chromium; override
  *    with CHROME_PATH.
@@ -66,9 +67,13 @@ const HANDLER_GRACE_MS = 150;
  */
 const STABLE_MS = 300;
 
-/** Returns a reason why e2e tests can't run here, or undefined if they can. */
-export function skipReason(): string | undefined {
+/**
+ * Returns a reason why e2e tests can't run here, or undefined if they can.
+ * `keyPresses`: whether the tests send key presses, which needs xdotool.
+ */
+export function skipReason({ keyPresses }: { keyPresses: boolean }): string | undefined {
   if (!process.env['DISPLAY']) return 'no DISPLAY; run under xvfb-run';
+  if (!keyPresses) return undefined;
   try {
     execFileSync(XDOTOOL, ['version'], { stdio: 'ignore' });
   } catch {

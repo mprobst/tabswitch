@@ -1,5 +1,7 @@
 # <img src="logo128.png" width="48" height="48" alt="" align="top"> tabswitch
 
+[![CI](https://github.com/mprobst/tabswitch/actions/workflows/ci.yml/badge.svg)](https://github.com/mprobst/tabswitch/actions/workflows/ci.yml)
+
 A simple Chrome extension to switch between the two most recently used tabs,
 with minimal permissions required. There are other extensions with similar
 functionality, but they often require excessive permissions.
@@ -35,7 +37,7 @@ Requires Node.js 24 (see `.nvmrc`). Run `npm install` first.
 ### Releasing
 
 `npm run release -- <patch|minor|major>` releases a new version from an
-up-to-date `main`. It runs `npm run check`, bumps the version in
+up-to-date `main` whose CI run has passed. It runs `npm run check`, bumps the version in
 `manifest.json` and `package.json`, builds the zip, commits and tags
 `vX.Y.Z` with the commit subjects since the last release as notes, pushes,
 creates a GitHub release with the zip, and uploads the zip to the Chrome Web

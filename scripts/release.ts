@@ -3,7 +3,8 @@
  *
  *   npm run release -- <patch|minor|major> [--dry-run] [--no-store]
  *
- * 1. Checks that `main` is clean and up to date, and runs `npm run check`.
+ * 1. Checks that `main` is clean, up to date and passed CI, and runs
+ *    `npm run check`.
  * 2. Bumps the version in manifest.json, package.json and package-lock.json.
  * 3. Builds the Web Store zip (`npm run bundle`, which writes `<name>.zip`).
  * 4. Commits "Release vX.Y.Z" with release notes (the commit subjects since
@@ -108,6 +109,20 @@ function main(argv: string[]) {
     fail('main is not the same as origin/main; pull or push first');
   }
   runShowingOutput('gh', ['auth', 'status']);
+  const head = runCapturingOutput('git', ['rev-parse', 'HEAD']);
+  let ci: string;
+  try {
+    ci = runCapturingOutput('gh', [
+      ...['run', 'list', '--workflow', 'ci.yml', '--commit', head, '--limit', '1'],
+      ...['--json', 'status,conclusion,url'],
+      ...['--jq', '.[0] // {} | [.status, .conclusion, .url] | join(" ")'],
+    ]);
+  } catch (e) {
+    fail(`could not get the CI status of ${head.slice(0, 7)}: ${String(e)}`);
+  }
+  if (!ci.startsWith('completed success')) {
+    fail(`CI hasn't passed for ${head.slice(0, 7)}: ${ci || 'no run found'}`);
+  }
   if (store) {
     const missing = STORE_SECRETS.filter((name) => !process.env[name]);
     if (missing.length > 0) fail(`missing ${missing.join(', ')} for the Web Store upload`);
