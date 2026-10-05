@@ -1,11 +1,15 @@
 {
+  "type": "module",
   "dependencies": {
-    "typescript": "^5.0.2"
+    "typescript": "^5.9"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.224"
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^24"
   },
   "scripts": {
+    "typecheck": "tsc --noEmit -p . && tsc -p test",
+    "test": "tsc && tsc -p test && node --test 'test/unit/*.test.ts'",
     "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json"
   }
 }
