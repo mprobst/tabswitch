@@ -1,116 +1,146 @@
-let lastTabIds: chrome.tabs.TabActiveInfo[] = [];
-loadLastTabIds();
-
 /**
- * loadLastTabIds loads the list of tabs from persistent storage.
+ * Switch Tabs: toggle between the most recently used tabs.
  *
- * This extension persists the list of tabs across browser restarts, so that
- * switching works after a Chrome restart.
+ * The extension keeps a most-recently-used (MRU) list of tab IDs, most recent
+ * first. Each tab appears at most once, so closing tabs just removes them from
+ * the list and the next-most-recent tab takes over.
  */
-async function loadLastTabIds() {
-  const storage = await chrome.storage.sync.get({ 'lastTabIds': '[]' });
-  lastTabIds = JSON.parse(storage['lastTabIds'] ?? '[]');
-  console.log('loaded lastTabIds, got', lastTabIds);
-  cleanUpTabs();
+
+/** Tab IDs, most recently used first. Each ID appears at most once. */
+let mru: number[] = [];
+
+/** Upper bound on remembered tabs; anything older is irrelevant for toggling. */
+const MAX_ENTRIES = 100;
+
+/**
+ * Loads the MRU list from session storage.
+ *
+ * MV3 service workers are terminated after ~30s of inactivity, so the list must
+ * survive restarts of the worker. `storage.session` is the right scope for
+ * that: it lives exactly as long as the browser session, which is also how
+ * long tab IDs are valid (Chrome reassigns tab IDs after a restart).
+ *
+ * Every event handler awaits `ready` before touching `mru`, because the event
+ * that woke up the worker is dispatched before this load completes.
+ */
+const ready: Promise<void> = (async () => {
+  const stored = await chrome.storage.session.get({ mru: [] });
+  const loaded: number[] = Array.isArray(stored['mru']) ? stored['mru'] : [];
+  // Drop tabs that were closed while we weren't looking.
+  const existing = new Set((await chrome.tabs.query({})).map(t => t.id));
+  mru = loaded.filter(id => existing.has(id));
+  console.log('loaded MRU list with', mru.length, 'tabs');
+})();
+
+function save() {
+  chrome.storage.session.set({ mru }).catch(e => console.error('saving MRU failed', e));
 }
 
-/** Persists the list of tab IDs to storage. */
-function saveLastTabIds() {
-  chrome.storage.sync.set({ 'lastTabIds': JSON.stringify(lastTabIds) });
-  console.log('stored', lastTabIds.length, 'tabs.');
+/** Moves (or adds) the given tab to the front of the MRU list. */
+function touch(tabId: number) {
+  const i = mru.indexOf(tabId);
+  if (i === 0) return;
+  if (i > 0) mru.splice(i, 1);
+  mru.unshift(tabId);
+  if (mru.length > MAX_ENTRIES) mru.length = MAX_ENTRIES;
+  save();
 }
 
-/** tabActivated records that the given tab is now the most recently used tab. */
-function tabActivated(activeInfo: chrome.tabs.TabActiveInfo) {
-  console.log('activated tab', activeInfo);
-  if (lastTabIds.length > 0 && lastTabIds[lastTabIds.length - 1].tabId == activeInfo.tabId) {
-    console.log('same tab as last');
-    return;
-  }
-  lastTabIds.push(activeInfo);
-  saveLastTabIds();
+/** Removes the given tab from the MRU list. */
+function forget(tabId: number) {
+  const i = mru.indexOf(tabId);
+  if (i < 0) return;
+  mru.splice(i, 1);
+  save();
+}
+
+/** Records the active tab of the given window as most recently used. */
+async function touchActiveTabOf(windowId: number) {
+  const [tab] = await chrome.tabs.query({ active: true, windowId });
+  if (tab?.id !== undefined) touch(tab.id);
 }
 
 /**
- * Focusing windows is handled differently from switching tabs by Chrome
- * (there's no additional tab activated event); we need to record both
- * operations so that switching tabs across windows works.
+ * Returns the active tab in the last focused *normal* window, i.e. the tab the
+ * user is looking at, ignoring popups, picture-in-picture windows, devtools etc.
  */
-async function windowFocused() {
-  const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (activeTabs.length !== 1) {
-    return;  // e.g. a developer tools window that has no tabs
+async function currentTabId(): Promise<number | undefined> {
+  try {
+    const win = await chrome.windows.getLastFocused({ populate: true, windowTypes: ['normal'] });
+    return win.tabs?.find(t => t.active)?.id;
+  } catch (e) {
+    return undefined;  // no normal windows open
   }
-  const activeTab = activeTabs[0];
-  if (!activeTab.id) {
-    return;
-  }
-  tabActivated({ tabId: activeTab.id, windowId: activeTab.windowId })
-}
-
-/** Removes tabs from our list when they are removed (e.g. closed). */
-function tabRemoved(tabId: number) {
-  for (let i = lastTabIds.length - 1; i >= 0; i--) {
-    if (lastTabIds[i].tabId === tabId) {
-      lastTabIds.splice(i, 1);
-    }
-  }
-}
-
-/** cleanUpTabs removes stale entries from `lastTabIds`, i.e. tabs that no longer exist. */
-async function cleanUpTabs() {
-  let removed = 0;
-  for (let i = lastTabIds.length - 1; i >= 0; i--) {
-    const someTabId = lastTabIds[i];
-    let tab;
-    try {
-      tab = await chrome.tabs.get(someTabId.tabId);
-    } catch (e) {
-      console.log('previous tab no longer exists at', i, ', removing.');
-      lastTabIds.splice(i, 1);
-      removed++;
-    }
-  }
-  console.log('cleanUpTabs: removed', removed, 'tabs.');
 }
 
 /**
- * activatePreviousTab switches to the previously used tab, it's the main
- * action of this extension.
+ * A tab was activated. Only count it as "used" if it happened in the focused
+ * window: activations in background windows (e.g. Chrome picking a neighbour
+ * after a tab closes there) aren't something the user looked at. If the window
+ * gets focused later, onFocusChanged records the tab then.
+ */
+chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+  await ready;
+  const win = await chrome.windows.get(windowId).catch(() => undefined);
+  if (win?.focused && win.type === 'normal') touch(tabId);
+});
+
+/**
+ * Focusing a window doesn't fire onActivated, so record its active tab here.
+ * The filter restricts this to normal windows; focus moving to anything else
+ * (a Meet picture-in-picture or popup window, devtools, another application)
+ * arrives as WINDOW_ID_NONE and is ignored.
+ */
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  await ready;
+  await touchActiveTabOf(windowId);
+}, { windowTypes: ['normal'] });
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await ready;
+  forget(tabId);
+});
+
+/** Prerendering and similar mechanisms can swap a tab's ID; keep its MRU slot. */
+chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+  await ready;
+  const i = mru.indexOf(removedTabId);
+  if (i < 0) return;
+  mru.splice(i, 1, addedTabId);
+  save();
+});
+
+/**
+ * Switches to the previously used tab, the main action of this extension.
+ *
+ * Rather than trusting that the head of the MRU list is the current tab, ask
+ * Chrome what is actually active, so a missed or spurious event can't make the
+ * toggle go to the wrong place (or nowhere).
  */
 async function activatePreviousTab() {
-  console.log('activate previous tab triggered. Have', lastTabIds.length, 'tabs');
-  if (lastTabIds.length <= 1) {
-    console.log('no previous tabs');
-    return;
-  }
-  // Handle the case where a previous tab no longer exists by attempting to
-  // switch to tabs in order, existing on first success.
-  for (let i = lastTabIds.length - 2; i >= 0; i--) {
-    const previousTab = lastTabIds[i];
-    let tab;
+  await ready;
+  const current = await currentTabId();
+  if (current !== undefined) touch(current);
+
+  for (const tabId of [...mru]) {
+    if (tabId === current) continue;
+    let tab: chrome.tabs.Tab;
     try {
-      tab = await chrome.tabs.get(previousTab.tabId);
+      tab = await chrome.tabs.get(tabId);
     } catch (e) {
-      console.log('previous tab no longer exists at', i, ', removing.');
-      lastTabIds.splice(i, 1);
+      forget(tabId);  // closed without us noticing
       continue;
     }
-    if (tab) {
-      console.log('found tab, activating', i, previousTab.tabId);
-      // Also focus the window, in case the tab is in a different (background)
-      // window.
-      chrome.windows.update(previousTab.windowId, { focused: true });
-      chrome.tabs.update(previousTab.tabId, { active: true });
-      return;
-    }
+    // Activate first, then focus the window. Use the tab's *current* window,
+    // since tabs can be moved between windows after we saw them.
+    await chrome.tabs.update(tabId, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    return;
   }
+  console.log('no previous tab to switch to');
 }
 
-console.log('extension loading, adding listeners');
-chrome.tabs.onActivated.addListener(tabActivated);
-chrome.tabs.onRemoved.addListener(tabRemoved)
-chrome.windows.onFocusChanged.addListener(windowFocused);
 chrome.commands.onCommand.addListener((command: string) => {
   if (command !== 'previous-tab') {
     console.error('unknown command', command);
@@ -118,6 +148,14 @@ chrome.commands.onCommand.addListener((command: string) => {
   }
   activatePreviousTab();
 });
-windowFocused();
+
+/** Seed the list with the visible tab when the browser or extension starts. */
+async function seed() {
+  await ready;
+  const current = await currentTabId();
+  if (current !== undefined) touch(current);
+}
+chrome.runtime.onStartup.addListener(seed);
+chrome.runtime.onInstalled.addListener(seed);
 
 export { };

@@ -3,7 +3,7 @@
     "typescript": "^5.0.2"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.224"
+    "@types/chrome": "^0.3.4"
   },
   "scripts": {
     "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json"

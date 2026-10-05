@@ -11,8 +11,9 @@ Store](https://chrome.google.com/webstore/detail/switch-tabs/jpfcacngcfejgnoaobk
 
 ## Permissions
 
-The extension requires Storage permissions to persist the last used tabs across
-browser restarts.
+The extension requires Storage permissions to keep the list of recently used
+tabs while its service worker is suspended. The list lives in session storage,
+so it is cleared when Chrome restarts (tab IDs don't survive a restart anyway).
 
 ## Configuration
 
