@@ -1,7 +1,7 @@
 /**
  * Releases a new version of the extension:
  *
- *   npm run release -- <patch|minor|major> [--dry-run] [--no-store]
+ *   npm run release -- <patch|minor|major> [--dry-run] [--no-store] [--skip-ci]
  *
  * 1. Checks that `main` is clean, up to date and passed CI, and runs
  *    `npm run check`.
@@ -22,6 +22,8 @@
  *
  * `--dry-run` only runs the checks and prints what would happen.
  * `--no-store` skips the Web Store upload, e.g. to upload by hand.
+ * `--skip-ci` releases even if CI hasn't passed (yet) for the commit, e.g.
+ * while GitHub Actions is down; `npm run check` still runs locally.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -29,6 +31,7 @@ import fs from 'node:fs';
 type Bump = 'patch' | 'minor' | 'major';
 const BUMPS: readonly string[] = ['patch', 'minor', 'major'] satisfies Bump[];
 const STORE_SECRETS = ['CLIENT_ID', 'CLIENT_SECRET', 'REFRESH_TOKEN'];
+const USAGE = 'usage: npm run release -- <patch|minor|major> [--dry-run] [--no-store] [--skip-ci]';
 
 /** Runs a command, showing its output. Throws if it fails. */
 function runShowingOutput(command: string, args: string[]) {
@@ -66,6 +69,19 @@ export function bumpVersion(version: string, bump: Bump): string {
   }
 }
 
+/** Returns the CI status of `commit`, e.g. "completed success <url>", or "" if there is no run. */
+function ciStatus(commit: string): string {
+  try {
+    return runCapturingOutput('gh', [
+      ...['run', 'list', '--workflow', 'ci.yml', '--commit', commit, '--limit', '1'],
+      ...['--json', 'status,conclusion,url'],
+      ...['--jq', '.[0] // {} | [.status, .conclusion, .url] | join(" ")'],
+    ]);
+  } catch (e) {
+    fail(`could not get the CI status of ${commit.slice(0, 7)}: ${String(e)}`);
+  }
+}
+
 /** Release notes: the subjects of all commits since the previous release tag. */
 function releaseNotes(): string {
   let range = 'HEAD';
@@ -82,9 +98,12 @@ function main(argv: string[]) {
   const bump = argv.find((a) => !a.startsWith('--'));
   const dryRun = argv.includes('--dry-run');
   const store = !argv.includes('--no-store');
-  if (!bump || !BUMPS.includes(bump)) {
-    fail('usage: npm run release -- <patch|minor|major> [--dry-run] [--no-store]');
-  }
+  const skipCi = argv.includes('--skip-ci');
+  if (!bump || !BUMPS.includes(bump)) fail(USAGE);
+  const unknown = argv.filter(
+    (a) => a.startsWith('--') && !['--dry-run', '--no-store', '--skip-ci'].includes(a),
+  );
+  if (unknown.length > 0) fail(`unknown option ${unknown.join(', ')}; ${USAGE}`);
 
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')) as {
     name: string;
@@ -110,18 +129,11 @@ function main(argv: string[]) {
   }
   runShowingOutput('gh', ['auth', 'status']);
   const head = runCapturingOutput('git', ['rev-parse', 'HEAD']);
-  let ci: string;
-  try {
-    ci = runCapturingOutput('gh', [
-      ...['run', 'list', '--workflow', 'ci.yml', '--commit', head, '--limit', '1'],
-      ...['--json', 'status,conclusion,url'],
-      ...['--jq', '.[0] // {} | [.status, .conclusion, .url] | join(" ")'],
-    ]);
-  } catch (e) {
-    fail(`could not get the CI status of ${head.slice(0, 7)}: ${String(e)}`);
-  }
+  const ci = ciStatus(head);
   if (!ci.startsWith('completed success')) {
-    fail(`CI hasn't passed for ${head.slice(0, 7)}: ${ci || 'no run found'}`);
+    const problem = `CI hasn't passed for ${head.slice(0, 7)}: ${ci || 'no run found'}`;
+    if (!skipCi) fail(`${problem} (--skip-ci to release anyway)`);
+    console.warn(`release: ${problem}; releasing anyway (--skip-ci)`);
   }
   if (store) {
     const missing = STORE_SECRETS.filter((name) => !process.env[name]);
