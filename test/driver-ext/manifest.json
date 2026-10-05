@@ -1,0 +1,8 @@
+{
+  "name": "Test driver",
+  "description": "Helper extension for end-to-end tests; drives tabs and windows via the extension API.",
+  "manifest_version": 3,
+  "version": "0.0.1",
+  "background": { "service_worker": "driver.js" },
+  "permissions": ["tabs"]
+}
