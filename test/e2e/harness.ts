@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { asTuple, type Tuple } from '../tuple.ts';
 import {
   test as base,
   chromium,
@@ -44,12 +45,12 @@ export type Current =
   | { windowId: null; tabId: null; focusedCount: number };
 
 /** A window as returned by `Browser.newWindow()`. */
-export type NewWindow = { windowId: number; tabIds: number[] };
+export type NewWindow<N extends number = number> = { windowId: number; tabIds: Tuple<number, N> };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const EXT_DIR = process.env.EXT_DIR ?? path.resolve(here, '../..');
+export const EXT_DIR = process.env['EXT_DIR'] ?? path.resolve(here, '../..');
 const DRIVER_DIR = path.resolve(here, '../driver-ext');
-const XDOTOOL = process.env.XDOTOOL ?? 'xdotool';
+const XDOTOOL = process.env['XDOTOOL'] ?? 'xdotool';
 
 /**
  * How long to give the extension's event handlers after Chrome's state has
@@ -67,7 +68,7 @@ const STABLE_MS = 300;
 
 /** Returns a reason why e2e tests can't run here, or undefined if they can. */
 export function skipReason(): string | undefined {
-  if (!process.env.DISPLAY) return 'no DISPLAY; run under xvfb-run';
+  if (!process.env['DISPLAY']) return 'no DISPLAY; run under xvfb-run';
   try {
     execFileSync(XDOTOOL, ['version'], { stdio: 'ignore' });
   } catch {
@@ -106,7 +107,7 @@ async function settleAndHold(
   expected: unknown,
   { message, stableFor = STABLE_MS, timeout }: SettleOptions,
 ) {
-  await expect.poll(fn, { message, timeout }).toEqual(expected);
+  await expect.poll(fn, { message, ...(timeout !== undefined && { timeout }) }).toEqual(expected);
   const until = Date.now() + stableFor;
   while (Date.now() < until) {
     await sleep(50);
@@ -147,7 +148,7 @@ export class Browser {
     const ctx = await chromium.launchPersistentContext(userDataDir, {
       headless: false,
       channel: 'chromium',
-      executablePath: process.env.CHROME_PATH || undefined,
+      ...(process.env['CHROME_PATH'] && { executablePath: process.env['CHROME_PATH'] }),
       viewport: null,
       args: [
         `--disable-extensions-except=${extensions}`,
@@ -197,6 +198,7 @@ export class Browser {
       'the test driver extension',
     );
     const page = this.ctx.pages()[0];
+    if (!page) throw new Error('the browser has no initial page');
     this.cdp = await this.ctx.newCDPSession(page);
     this.cdp.on('ServiceWorker.workerVersionUpdated', (e) => {
       for (const v of e.versions) this.versions.set(v.versionId, v);
@@ -266,7 +268,12 @@ export class Browser {
 
   /** Sends real key presses to the focused X window, e.g. 'ctrl+q' or 'ctrl+q ctrl+q'. */
   key(combo: string) {
-    execFileSync(XDOTOOL, ['key', '--delay', process.env.KEY_DELAY ?? '20', ...combo.split(' ')]);
+    execFileSync(XDOTOOL, [
+      'key',
+      '--delay',
+      process.env['KEY_DELAY'] ?? '20',
+      ...combo.split(' '),
+    ]);
   }
 
   /** Attaches the extensions' console output and the tab and window state to the test report. */
@@ -297,11 +304,11 @@ export class Browser {
   // ---- Tab and window helpers (all via the driver extension) ----
 
   /** Opens a new window with `n` tabs and waits for it to have focus (if `focused`). */
-  async newWindow(
-    n = 1,
+  async newWindow<const N extends number = 1>(
+    n: N = 1 as N,
     { type = 'normal', focused = true }: { type?: 'normal' | 'popup'; focused?: boolean } = {},
-  ): Promise<NewWindow> {
-    const w = await this.drv(
+  ): Promise<NewWindow<N>> {
+    const created = await this.drv(
       async ({
         n,
         type,
@@ -310,13 +317,14 @@ export class Browser {
         n: number;
         type: 'normal' | 'popup';
         focused: boolean;
-      }): Promise<NewWindow> => {
+      }): Promise<{ windowId: number; tabIds: number[] }> => {
         const urls = Array.from({ length: n }, (_, i) => `data:text/html,tab${i}`);
         const w = await chrome.windows.create({ url: urls, type, focused });
         return { windowId: w!.id!, tabIds: w!.tabs!.map((t) => t.id!) };
       },
       { n, type, focused },
     );
+    const w = { windowId: created.windowId, tabIds: asTuple(created.tabIds, n) };
     if (focused) {
       await this.reached({ windowId: w.windowId }, `new ${type} window ${w.windowId} has focus`);
     }
@@ -381,8 +389,9 @@ export class Browser {
       if (focused.length !== 1) {
         return { windowId: null, tabId: null, focusedCount: focused.length };
       }
-      const tab = focused[0].tabs?.find((t) => t.active);
-      return { windowId: focused[0].id!, tabId: tab?.id ?? null };
+      const win = focused[0]!;
+      const tab = win.tabs?.find((t) => t.active);
+      return { windowId: win.id!, tabId: tab?.id ?? null };
     });
   }
 

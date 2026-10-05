@@ -19,6 +19,8 @@
  * is evaluated afresh.
  */
 
+import { asTuple, type Tuple } from '../tuple.ts';
+
 const WINDOW_ID_NONE = -1;
 
 /** Makes every module evaluation unique, across FakeChrome instances too (ES modules are cached by URL). */
@@ -50,7 +52,7 @@ class FakeEvent {
   }
 
   addListener(fn: Listener['fn'], filter?: WindowFilter) {
-    this.listeners.push({ fn, filter });
+    this.listeners.push(filter ? { fn, filter } : { fn });
   }
 
   removeListener(fn: Listener['fn']) {
@@ -67,13 +69,13 @@ class FakeEvent {
       const listenerArgs = this.argsFor(listener.filter, args);
       this.env.schedule(() => {
         // The worker may have been restarted in the meantime.
-        if (this.listeners.includes(listener)) return listener.fn(...listenerArgs);
+        return this.listeners.includes(listener) ? listener.fn(...listenerArgs) : undefined;
       });
     }
   }
 
   /** Hook for events that deliver different arguments depending on the listener's filter. */
-  argsFor(filter: WindowFilter | undefined, args: unknown[]): unknown[] {
+  argsFor(_filter: WindowFilter | undefined, args: unknown[]): unknown[] {
     return args;
   }
 }
@@ -389,13 +391,13 @@ export class FakeChrome {
    * Opens a window with the given number of tabs; the first one is active. Like
    * a real new window, it takes focus unless `focused` is false.
    */
-  addWindow({
+  addWindow<const N extends number = 1>({
     type = 'normal',
-    tabs = 1,
+    tabs = 1 as N,
     focused = true,
-  }: { type?: string; tabs?: number; focused?: boolean } = {}): {
+  }: { type?: string; tabs?: N; focused?: boolean } = {}): {
     windowId: number;
-    tabIds: number[];
+    tabIds: Tuple<number, N>;
   } {
     const windowId = this.nextWindowId++;
     this.windows.set(windowId, { id: windowId, type, focused: false });
@@ -406,9 +408,9 @@ export class FakeChrome {
       this.tabs.push(tab);
       tabIds.push(tab.id);
     }
-    if (tabs > 0) this.onActivated.fire({ tabId: tabIds[0], windowId });
+    if (tabIds[0] !== undefined) this.onActivated.fire({ tabId: tabIds[0], windowId });
     if (focused) this.focus(windowId);
-    return { windowId, tabIds };
+    return { windowId, tabIds: asTuple(tabIds, tabs) };
   }
 
   /** Opens a tab at the end of the window; it becomes active if `active` is set. */
@@ -444,7 +446,8 @@ export class FakeChrome {
     const i = siblings.indexOf(tab);
     this.tabs.splice(this.tabs.indexOf(tab), 1);
     this.onRemoved.fire(tabId, { windowId: tab.windowId, isWindowClosing: false });
-    if (tab.active) this.activate(siblings[i + 1] ?? siblings[i - 1]);
+    const neighbour = siblings[i + 1] ?? siblings[i - 1];
+    if (tab.active && neighbour) this.activate(neighbour);
   }
 
   /** Closes a window and its tabs. If it had focus, the previously focused window gets it. */
@@ -457,8 +460,9 @@ export class FakeChrome {
     this.windows.delete(windowId);
     this.focusOrder = this.focusOrder.filter((id) => id !== windowId);
     if (!window.focused) return;
-    if (this.focusOrder.length > 0) {
-      this.focus(this.focusOrder[0]);
+    const next = this.focusOrder[0];
+    if (next !== undefined) {
+      this.focus(next);
     } else {
       this.onFocusChanged.fire(WINDOW_ID_NONE);
     }
@@ -474,9 +478,10 @@ export class FakeChrome {
     const siblings = this.tabsOf(tab.windowId);
     const i = siblings.indexOf(tab);
     this.tabs.splice(this.tabs.indexOf(tab), 1);
-    if (tab.active && siblings.length > 1) {
+    const neighbour = siblings[i + 1] ?? siblings[i - 1];
+    if (tab.active && neighbour) {
       tab.active = false;
-      this.activate(siblings[i + 1] ?? siblings[i - 1]);
+      this.activate(neighbour);
     }
     tab.windowId = windowId;
     tab.active = false;
