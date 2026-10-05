@@ -4,12 +4,14 @@
     "typescript": "^5.9"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.3.4",
     "@types/node": "^24"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p . && tsc -p test",
     "test": "tsc && tsc -p test && node --test 'test/unit/*.test.ts'",
-    "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json"
+    "build": "./node_modules/.bin/tsc && zip tabswitch.zip *.js logo*.png manifest.json",
+    "test:e2e": "tsc && tsc -p test && playwright test"
   }
 }

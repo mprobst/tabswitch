@@ -9,5 +9,5 @@
     "types": ["node", "chrome"],
     "strict": true
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../playwright.config.ts"]
 }
