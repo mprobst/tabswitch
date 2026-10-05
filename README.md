@@ -1,4 +1,4 @@
-# tabswitch
+# <img src="logo128.png" width="48" height="48" alt="" align="top"> tabswitch
 
 A simple Chrome extension to switch between the two most recently used tabs,
 with minimal permissions required. There are other extensions with similar
@@ -23,7 +23,13 @@ keybinding via `More Tools -> Extensions -> (Hotdog Menu) Keybindings`.
 
 ## Development
 
-`npm run build` compiles the extension and creates `tabswitch.zip` for upload.
+Requires Node.js 24 (see `.nvmrc`). Run `npm install` first.
+
+- `npm run build` compiles the extension and creates `tabswitch.zip` for upload.
+- `npm run check` runs everything that should pass before a commit: the
+  formatting check, linting, type checks and unit tests.
+- `npm run format` formats all files with [Prettier](https://prettier.io);
+  `npm run lint` runs [ESLint](https://eslint.org) with typescript-eslint.
 
 ### Tests
 
@@ -48,3 +54,7 @@ On Debian/Ubuntu: `sudo apt install xvfb xdotool`. Set `EXT_DIR` to run the
 tests against a different build of the extension. For failed tests, the
 report (`npx playwright show-report`) includes the extension's console output
 and the final window and tab state.
+
+## License
+
+[MIT](LICENSE)

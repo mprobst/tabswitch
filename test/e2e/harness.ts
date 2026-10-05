@@ -185,8 +185,9 @@ export class Browser {
     this.targetScript = targetScript;
     ctx.on('console', (m) => {
       const url = m.location().url;
-      if (url.startsWith('chrome-extension://'))
+      if (url.startsWith('chrome-extension://')) {
         this.logs.push(`[${m.type()}] ${path.basename(url)}: ${m.text()}`);
+      }
     });
   }
 
@@ -198,7 +199,7 @@ export class Browser {
     const page = this.ctx.pages()[0];
     this.cdp = await this.ctx.newCDPSession(page);
     this.cdp.on('ServiceWorker.workerVersionUpdated', (e) => {
-      for (const v of e.versions) this.versions.set(v.versionId, v as WorkerVersion);
+      for (const v of e.versions) this.versions.set(v.versionId, v);
     });
     await this.cdp.send('ServiceWorker.enable');
     await expect
@@ -240,9 +241,10 @@ export class Browser {
   /** Evaluates `fn(arg)` in the driver extension's service worker. */
   drv<R>(fn: () => R | Promise<R>): Promise<R>;
   drv<A, R>(fn: (arg: A) => R | Promise<R>, arg: A): Promise<R>;
+  // The overloads above give callers precise types; Playwright's own
+  // generics can't express the optional argument.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   drv(fn: (arg?: any) => unknown, arg?: unknown): Promise<unknown> {
-    // The overloads above give callers precise types; Playwright's own
-    // generics can't express the optional argument.
     return this.driver.evaluate(fn, arg);
   }
 
@@ -281,7 +283,7 @@ export class Browser {
       });
     } catch (e) {
       await testInfo.attach('windows', {
-        body: `could not query windows: ${e}`,
+        body: `could not query windows: ${String(e)}`,
         contentType: 'text/plain',
       });
     }
@@ -315,8 +317,9 @@ export class Browser {
       },
       { n, type, focused },
     );
-    if (focused)
+    if (focused) {
       await this.reached({ windowId: w.windowId }, `new ${type} window ${w.windowId} has focus`);
+    }
     return w;
   }
 
@@ -375,8 +378,9 @@ export class Browser {
     return this.drv(async (): Promise<Current> => {
       const wins = await chrome.windows.getAll({ populate: true });
       const focused = wins.filter((w) => w.focused);
-      if (focused.length !== 1)
+      if (focused.length !== 1) {
         return { windowId: null, tabId: null, focusedCount: focused.length };
+      }
       const tab = focused[0].tabs?.find((t) => t.active);
       return { windowId: focused[0].id!, tabId: tab?.id ?? null };
     });

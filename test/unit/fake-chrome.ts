@@ -29,6 +29,8 @@ type FakeTab = { id: number; windowId: number; active: boolean };
 type FakeTabSnapshot = FakeTab & { index: number };
 type FakeWindowSnapshot = FakeWindow & { tabs?: FakeTabSnapshot[] };
 type WindowFilter = { windowTypes?: string[] };
+// Listeners of different events take different arguments.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Listener = { fn: (...args: any[]) => unknown; filter?: WindowFilter };
 type TabQuery = {
   active?: boolean;
@@ -94,7 +96,7 @@ class FakeFocusEvent extends FakeEvent {
 class FakeStorageArea {
   env: FakeChrome;
   /** The stored items; survives worker restarts. */
-  data: Record<string, any> = {};
+  data: Record<string, unknown> = {};
 
   constructor(env: FakeChrome) {
     this.env = env;
@@ -103,8 +105,8 @@ class FakeStorageArea {
   /**
    * @param keys Keys to read; an object also provides defaults for missing keys.
    */
-  get(keys?: string | string[] | Record<string, any> | null): Promise<Record<string, any>> {
-    const result: Record<string, any> = {};
+  get(keys?: string | string[] | Record<string, unknown> | null): Promise<Record<string, unknown>> {
+    const result: Record<string, unknown> = {};
     if (keys == null) {
       Object.assign(result, this.data);
     } else if (typeof keys === 'string' || Array.isArray(keys)) {
@@ -120,7 +122,7 @@ class FakeStorageArea {
     return this.env.call(() => copy, this.env.storageGetDelay);
   }
 
-  set(items: Record<string, any>): Promise<void> {
+  set(items: Record<string, unknown>): Promise<void> {
     Object.assign(this.data, structuredClone(items));
     return this.env.call(() => undefined);
   }
@@ -167,7 +169,7 @@ export class FakeChrome {
    * The object to install as `globalThis.chrome`. It only implements the
    * subset of the API that the extension uses, hence the loose type.
    */
-  chrome: Record<string, any>;
+  chrome: Record<string, unknown>;
 
   constructor() {
     this.chrome = {
@@ -261,8 +263,11 @@ export class FakeChrome {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
         this.pending--;
-        if (failed) reject(error);
-        else resolve(result as T);
+        if (failed) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        } else {
+          resolve(result as T);
+        }
       }, delay);
     });
   }
@@ -277,8 +282,9 @@ export class FakeChrome {
     const deadline = Date.now() + 5000;
     let idleRounds = 0;
     while (idleRounds < 2) {
-      if (Date.now() > deadline)
+      if (Date.now() > deadline) {
         throw new Error(`settle() timed out, ${this.pending} calls pending`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 0));
       idleRounds = this.pending === 0 ? idleRounds + 1 : 0;
     }
