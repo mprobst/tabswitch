@@ -42,7 +42,9 @@ up-to-date `main` whose CI run has passed. It runs `npm run check`, bumps the ve
 `vX.Y.Z` with the commit subjects since the last release as notes, pushes,
 creates a GitHub release with the zip, and uploads the zip to the Chrome Web
 Store, where it is submitted for review. `--dry-run` stops after the checks
-and shows the new version and notes.
+and shows the new version and notes. `--skip-ci` releases even if CI hasn't
+passed (yet) for the commit, e.g. while GitHub Actions is down;
+`npm run check` still runs locally.
 
 The Web Store upload needs `CLIENT_ID`, `CLIENT_SECRET` and `REFRESH_TOKEN`
 in the environment or in a git-ignored `.env` file; see
